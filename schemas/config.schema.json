@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/codex-obsidian-second-brain/config.schema.json",
+  "title": "Second Brain local runtime configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "vaultPath"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "vaultPath": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^(?:[A-Za-z]:[\\\\/]|/).+",
+      "description": "Absolute local path supplied at install/runtime. It must never be committed or included in a release."
+    },
+    "dataDir": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^(?:[A-Za-z]:[\\\\/]|/).+",
+      "description": "Local derived-data directory outside, and not containing, the vault."
+    },
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lexicalLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        },
+        "semanticLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        },
+        "rrfK": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 60
+        },
+        "maxPrimaryEvidence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "default": 4
+        },
+        "maxRelatedEvidence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2,
+          "default": 2
+        },
+        "defaultTemporalIntent": {
+          "enum": ["current", "history"],
+          "default": "current"
+        },
+        "queryExpansion": {
+          "const": false,
+          "description": "Version 1 does not run query expansion."
+        },
+        "llmReranking": {
+          "const": false,
+          "description": "Version 1 does not run LLM reranking."
+        }
+      }
+    },
+    "semantic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "engine": {
+          "enum": ["qmd", "fastembed", "disabled"]
+        },
+        "allowModelDownload": {
+          "type": "boolean",
+          "default": false,
+          "description": "A model download requires a separate explicit initialization action."
+        }
+      }
+    },
+    "qmd": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "configDir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allowCollectionUpdateCommand": {
+          "const": false,
+          "description": "QMD collection update commands can execute a shell and are prohibited."
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "includeRawQuery": {
+          "const": false
+        },
+        "includeSnippets": {
+          "const": false
+        },
+        "includeCandidateContent": {
+          "const": false
+        }
+      }
+    },
+    "candidateGovernance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "autoConfirm": {
+          "const": false
+        },
+        "autoPromote": {
+          "const": false
+        },
+        "backgroundWrite": {
+          "const": false
+        }
+      }
+    }
+  }
+}

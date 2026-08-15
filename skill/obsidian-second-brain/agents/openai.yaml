@@ -1,0 +1,5 @@
+interface:
+  display_name: "可信第二大脑"
+  short_description: "本地检索 Obsidian，并用证据与候选闸门降低误记"
+  default_prompt: "Use $obsidian-second-brain to retrieve source-grounded project context before answering."
+

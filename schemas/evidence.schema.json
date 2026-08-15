@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/codex-obsidian-second-brain/evidence.schema.json",
+  "title": "Grounded retrieval result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "decision",
+    "reason",
+    "degraded",
+    "indexFresh",
+    "scope",
+    "temporalIntent",
+    "evidence",
+    "relatedEvidence",
+    "conflicts",
+    "elapsedMs"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "decision": { "enum": ["grounded", "insufficient", "conflict"] },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "degraded": { "type": "boolean" },
+    "degradedReason": { "type": ["string", "null"], "maxLength": 500 },
+    "indexFresh": { "type": "boolean" },
+    "vectorCoverage": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "scope": { "$ref": "#/$defs/scope" },
+    "temporalIntent": { "enum": ["current", "history"] },
+    "evidence": {
+      "type": "array",
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/evidenceItem" }
+    },
+    "relatedEvidence": {
+      "type": "array",
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/evidenceItem" }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidenceItem" }
+    },
+    "elapsedMs": { "type": "integer", "minimum": 0 },
+    "traceId": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F-]{36}$"
+    }
+  },
+  "$defs": {
+    "relativeMarkdownPath": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.md$",
+      "description": "Canonical vault-relative path using forward slashes."
+    },
+    "projectSummary": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["id", "name", "status", "updated"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "minLength": 1 },
+        "updated": { "type": ["string", "null"] }
+      }
+    },
+    "scopeCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "status"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "minLength": 1 }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "project", "candidates"],
+      "properties": {
+        "kind": { "enum": ["project", "global", "ambiguous", "unknown"] },
+        "project": { "$ref": "#/$defs/projectSummary" },
+        "candidates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/scopeCandidate" }
+        }
+      }
+    },
+    "contribution": {
+      "type": "object",
+      "description": "Rank contribution without source text or an absolute path."
+    },
+    "evidenceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "title",
+        "lineStart",
+        "lineEnd",
+        "projectId",
+        "authority",
+        "authorityScore",
+        "asOf",
+        "state",
+        "matchType",
+        "lexicalRank",
+        "vectorRank",
+        "rrfScore",
+        "contentHash",
+        "sourceOpened",
+        "contributions"
+      ],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativeMarkdownPath" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "heading": { "type": ["string", "null"], "maxLength": 300 },
+        "lineStart": { "type": "integer", "minimum": 1 },
+        "lineEnd": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Runtime validation must also enforce lineEnd >= lineStart."
+        },
+        "snippet": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "Returned to the caller only; never stored in an audit event or release artifact."
+        },
+        "projectId": { "type": ["string", "null"] },
+        "project": { "type": ["string", "null"] },
+        "authority": {
+          "enum": [
+            "system-rule",
+            "project-home",
+            "authoritative-memory",
+            "primary-input",
+            "system-index",
+            "verified-output",
+            "feedback",
+            "workflow",
+            "process",
+            "conversation-history",
+            "note"
+          ]
+        },
+        "authorityScore": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "asOf": { "type": ["string", "null"] },
+        "state": {
+          "enum": [
+            "candidate",
+            "confirmed",
+            "current",
+            "superseded",
+            "expired",
+            "disputed",
+            "historical"
+          ]
+        },
+        "matchType": { "enum": ["lexical", "vector", "hybrid", "wiki-link", "unknown"] },
+        "lexicalRank": { "type": ["integer", "null"], "minimum": 1 },
+        "vectorRank": { "type": ["integer", "null"], "minimum": 1 },
+        "rrfScore": { "type": "number", "minimum": 0 },
+        "contentHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "sourceOpened": { "const": true },
+        "contributions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/contribution" }
+        }
+      }
+    }
+  }
+}

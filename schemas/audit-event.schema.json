@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/codex-obsidian-second-brain/audit-event.schema.json",
+  "title": "Privacy-minimized audit event",
+  "oneOf": [
+    { "$ref": "#/$defs/searchEvent" },
+    { "$ref": "#/$defs/candidateTransitionEvent" }
+  ],
+  "$defs": {
+    "relativeMarkdownPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.md$"
+    },
+    "auditSourceReference": {
+      "anyOf": [
+        { "$ref": "#/$defs/relativeMarkdownPath" },
+        { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      ],
+      "description": "Only a reviewed safe relative reference or a one-way reference hash is allowed."
+    },
+    "base": {
+      "type": "object",
+      "required": ["schemaVersion", "traceId", "occurredAt", "event"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "traceId": { "type": "string", "format": "uuid" },
+        "occurredAt": { "type": "string", "format": "date-time" },
+        "event": { "enum": ["search", "candidate-transition"] }
+      }
+    },
+    "auditEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "lineStart",
+        "lineEnd",
+        "authority",
+        "state",
+        "matchType",
+        "lexicalRank",
+        "vectorRank",
+        "rrfScore",
+        "contentHash"
+      ],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativeMarkdownPath" },
+        "lineStart": { "type": "integer", "minimum": 1 },
+        "lineEnd": { "type": "integer", "minimum": 1 },
+        "authority": { "type": "string", "minLength": 1 },
+        "state": { "type": "string", "minLength": 1 },
+        "matchType": { "type": "string", "minLength": 1 },
+        "lexicalRank": { "type": ["integer", "null"], "minimum": 1 },
+        "vectorRank": { "type": ["integer", "null"], "minimum": 1 },
+        "rrfScore": { "type": "number", "minimum": 0 },
+        "contentHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "searchEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "traceId",
+            "occurredAt",
+            "event",
+            "queryHash",
+            "queryLength",
+            "temporalIntent",
+            "scopeKind",
+            "projectId",
+            "decision",
+            "reason",
+            "degraded",
+            "degradedReason",
+            "evidence"
+          ],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "traceId": { "type": "string", "format": "uuid" },
+            "occurredAt": { "type": "string", "format": "date-time" },
+            "event": { "const": "search" },
+            "queryHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "queryLength": { "type": "integer", "minimum": 0 },
+            "temporalIntent": { "enum": ["current", "history"] },
+            "scopeKind": { "enum": ["project", "global", "ambiguous", "unknown"] },
+            "projectId": { "type": ["string", "null"] },
+            "decision": { "enum": ["grounded", "insufficient", "conflict"] },
+            "reason": { "type": "string", "maxLength": 300 },
+            "degraded": { "type": "boolean" },
+            "degradedReason": { "type": ["string", "null"], "maxLength": 300 },
+            "evidence": {
+              "type": "array",
+              "maxItems": 6,
+              "items": { "$ref": "#/$defs/auditEvidence" }
+            }
+          }
+        }
+      ]
+    },
+    "candidateTransitionEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "traceId",
+            "occurredAt",
+            "event",
+            "candidateId",
+            "from",
+            "to",
+            "confirmationType",
+            "sourceRefs"
+          ],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "traceId": { "type": "string", "format": "uuid" },
+            "occurredAt": { "type": "string", "format": "date-time" },
+            "event": { "const": "candidate-transition" },
+            "candidateId": { "type": "string", "format": "uuid" },
+            "from": {
+              "type": ["string", "null"],
+              "enum": [null, "candidate", "confirmed", "current", "superseded", "expired", "disputed"]
+            },
+            "to": {
+              "enum": ["candidate", "confirmed", "current", "superseded", "expired", "disputed"]
+            },
+            "confirmationType": {
+              "type": ["string", "null"],
+              "enum": [null, "explicit-user", "authoritative-source"]
+            },
+            "sourceRefs": {
+              "type": "array",
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/auditSourceReference" }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "description": "Raw queries, snippets, note bodies, candidate content, credentials, and absolute paths are intentionally absent."
+}

@@ -1,0 +1,59 @@
+{
+  "name": "codex-obsidian-second-brain",
+  "version": "0.1.0",
+  "description": "Local, source-grounded retrieval and memory governance for an Obsidian Markdown second brain.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "sbrain": "src/cli.js",
+    "sbrain-mcp": "src/mcp-server.js"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src/",
+    "scripts/",
+    "skill/",
+    "docs/",
+    "schemas/",
+    "test/",
+    "README.md",
+    "SECURITY.md",
+    "PRIVACY.md",
+    "THIRD_PARTY_NOTICES.md",
+    "LICENSE",
+    "requirements-semantic.txt"
+  ],
+  "scripts": {
+    "sbrain": "node src/cli.js",
+    "mcp": "node src/mcp-server.js",
+    "check": "node scripts/check.mjs",
+    "test": "node --test --test-reporter=spec",
+    "test:coverage": "node --test --experimental-test-coverage",
+    "eval": "node scripts/run-eval.mjs",
+    "eval:hybrid": "node scripts/run-eval.mjs --semantic",
+    "verify": "npm run check && npm test",
+    "pack:check": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "config": {
+    "nodeLlamaCppPostinstall": "skip"
+  },
+  "license": "MIT",
+  "keywords": [
+    "obsidian",
+    "second-brain",
+    "local-search",
+    "codex",
+    "rag"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@tobilu/qmd": "2.5.3",
+    "yaml": "2.9.0",
+    "zod": "4.2.1"
+  }
+}

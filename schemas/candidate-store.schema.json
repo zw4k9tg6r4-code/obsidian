@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/codex-obsidian-second-brain/candidate-store.schema.json",
+  "title": "Local candidate memory store",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "records"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "records": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/record" }
+    }
+  },
+  "$defs": {
+    "state": {
+      "enum": ["candidate", "confirmed", "current", "superseded", "expired", "disputed"]
+    },
+    "relativeMarkdownPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.md$"
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "from", "to"],
+      "properties": {
+        "at": { "type": "string", "format": "date-time" },
+        "from": {
+          "anyOf": [
+            { "$ref": "#/$defs/state" },
+            { "type": "null" }
+          ]
+        },
+        "to": { "$ref": "#/$defs/state" },
+        "confirmationType": { "enum": ["explicit-user", "authoritative-source"] },
+        "replacedBy": { "type": "string", "format": "uuid" },
+        "reason": { "type": "string", "maxLength": 300 }
+      }
+    },
+    "confirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "at", "sourceRef"],
+      "properties": {
+        "type": { "enum": ["explicit-user", "authoritative-source"] },
+        "at": { "type": "string", "format": "date-time" },
+        "sourceRef": {
+          "anyOf": [
+            { "$ref": "#/$defs/relativeMarkdownPath" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "currentSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "contentHash", "verifiedAt"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativeMarkdownPath" },
+        "contentHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "verifiedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "scope",
+        "projectId",
+        "projectName",
+        "content",
+        "contentHash",
+        "status",
+        "createdBy",
+        "createdAt",
+        "updatedAt",
+        "sourceRefs",
+        "confirmation",
+        "currentSource",
+        "supersedes",
+        "history"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "Canonical project name retained for CLI compatibility."
+        },
+        "projectId": { "type": "string", "pattern": "^project-[0-9a-f]{12}$" },
+        "projectName": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Sensitive local candidate content. Candidate stores are forbidden in release artifacts."
+        },
+        "contentHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "status": { "$ref": "#/$defs/state" },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "sourceRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/relativeMarkdownPath" }
+        },
+        "confirmation": {
+          "anyOf": [
+            { "$ref": "#/$defs/confirmation" },
+            { "type": "null" }
+          ]
+        },
+        "currentSource": {
+          "anyOf": [
+            { "$ref": "#/$defs/currentSource" },
+            { "type": "null" }
+          ]
+        },
+        "supersedes": { "type": ["string", "null"], "format": "uuid" },
+        "history": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/transition" }
+        }
+      },
+      "description": "Schema shape only. Runtime governance must bind every candidate to one project, reject AI self-confirmation, and require verified Markdown in that same project before current."
+    }
+  }
+}
