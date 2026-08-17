@@ -1,6 +1,6 @@
 {
   "name": "codex-obsidian-second-brain",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local, source-grounded retrieval and memory governance for an Obsidian Markdown second brain.",
   "type": "module",
   "private": true,
@@ -18,6 +18,9 @@
     "docs/",
     "schemas/",
     "test/",
+    "AGENTS.md",
+    "START-HERE.md",
+    "INSTALL.cmd",
     "README.md",
     "SECURITY.md",
     "PRIVACY.md",

@@ -65,7 +65,8 @@ function Test-AllowedReleasePath {
     }
 
     $rootFiles = @(
-        '.gitignore', '.gitattributes', 'README.md', 'LICENSE', 'SECURITY.md',
+        '.gitignore', '.gitattributes', 'AGENTS.md', 'START-HERE.md', 'INSTALL.cmd',
+        'README.md', 'LICENSE', 'SECURITY.md',
         'PRIVACY.md', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md', 'package.json',
         'package-lock.json', 'requirements-semantic.txt', 'release-manifest.json',
         'SHA256SUMS'
@@ -112,7 +113,7 @@ function Test-AllowedReleasePath {
     $extension = [System.IO.Path]::GetExtension($leaf).ToLowerInvariant()
     $allowedExtensions = @(
         '.js', '.mjs', '.cjs', '.json', '.jsonl', '.md', '.ps1', '.py',
-        '.txt', '.yaml', '.yml', '.toml'
+        '.txt', '.yaml', '.yml', '.toml', '.cmd'
     )
     $allowedExtensionless = @('LICENSE', '.gitignore', '.gitattributes', 'SHA256SUMS')
     if ($allowedExtensionless -notcontains $leaf -and $allowedExtensions -notcontains $extension) {
@@ -324,6 +325,7 @@ if ($totalBytes -gt $MaxTotalBytes) {
 }
 
 $required = @(
+    'AGENTS.md', 'START-HERE.md', 'INSTALL.cmd', 'scripts/install-wizard.ps1',
     'README.md', 'LICENSE', 'SECURITY.md', 'PRIVACY.md', 'THIRD_PARTY_NOTICES.md',
     'package.json', 'package-lock.json', 'release-manifest.json', 'SHA256SUMS',
     'schemas/config.schema.json', 'schemas/evidence.schema.json',

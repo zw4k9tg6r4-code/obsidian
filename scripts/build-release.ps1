@@ -125,7 +125,7 @@ function Assert-ReleasePath {
     $extension = [System.IO.Path]::GetExtension($leaf).ToLowerInvariant()
     $allowedExtensions = @(
         '.js', '.mjs', '.cjs', '.json', '.jsonl', '.md', '.ps1', '.py',
-        '.txt', '.yaml', '.yml', '.toml'
+        '.txt', '.yaml', '.yml', '.toml', '.cmd'
     )
     $allowedExtensionless = @('LICENSE', '.gitignore', '.gitattributes')
     if ($allowedExtensionless -notcontains $leaf -and $allowedExtensions -notcontains $extension) {
@@ -174,6 +174,9 @@ if (-not (Split-Path -Parent $source)) {
 Assert-NotInsideObsidianVault -Path $source
 
 $requiredSourceFiles = @(
+    'AGENTS.md',
+    'START-HERE.md',
+    'INSTALL.cmd',
     'README.md',
     'LICENSE',
     'SECURITY.md',
@@ -181,6 +184,7 @@ $requiredSourceFiles = @(
     'THIRD_PARTY_NOTICES.md',
     'package.json',
     'package-lock.json',
+    'scripts/install-wizard.ps1',
     'scripts/scan-release.ps1',
     'schemas/config.schema.json',
     'schemas/evidence.schema.json',
@@ -222,6 +226,9 @@ if (Test-IsSameOrChildPath -Root $source -Candidate $output) {
 $rootFileAllowlist = @(
     '.gitignore',
     '.gitattributes',
+    'AGENTS.md',
+    'START-HERE.md',
+    'INSTALL.cmd',
     'README.md',
     'LICENSE',
     'SECURITY.md',

@@ -26,6 +26,14 @@ The first semantic indexing run may download the 90 MB `BAAI/bge-small-zh-v1.5` 
 
 ## Quick start
 
+### Self-guided Windows package
+
+Download and fully extract the release ZIP outside the Vault, open its root folder in Codex, and say `安装这个`. The root `AGENTS.md` gives a fresh Codex the complete safe installation flow, so no long prompt is needed. If the Vault path is not known, that is the only information Codex must request.
+
+For a human-guided setup, double-click `INSTALL.cmd`. It installs the Codex Skill and creates a lexical index by default; it never modifies Vault Markdown or downloads the optional semantic model.
+
+### Manual commands
+
 ```powershell
 .\scripts\install.ps1 -VaultPath 'D:\Notes\MyVault' -Target both -AcceptNetwork
 .\scripts\setup-semantic.ps1 -AcceptNetwork
@@ -34,6 +42,8 @@ The first semantic indexing run may download the 90 MB `BAAI/bge-small-zh-v1.5` 
 ```
 
 Installation backs up the existing Codex/Antigravity Skill, installs pinned dependencies, and writes only local configuration outside the vault. It does not index the vault or download a model. Those are separate explicit steps. Use `scripts/rollback.ps1` with the emitted manifest to restore the previous installation.
+
+The one-click wizard composes those explicit steps only after the user confirms its summary. Its default is Codex-only plus lexical indexing; semantic setup remains separately consented.
 
 By default, derived data is stored under `%LOCALAPPDATA%\CodexSecondBrain`. Override it with `SECOND_BRAIN_DATA_DIR`.
 

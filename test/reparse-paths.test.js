@@ -48,6 +48,9 @@ function syntheticReleaseSource(root) {
   const source = join(root, 'source');
   mkdirSync(source, { recursive: true });
   writeText(join(source, 'README.md'), '# Synthetic release source\n');
+  writeText(join(source, 'AGENTS.md'), '# Synthetic installer instructions\n');
+  writeText(join(source, 'START-HERE.md'), '# Synthetic start page\n');
+  writeText(join(source, 'INSTALL.cmd'), '@echo off\r\nexit /b 0\r\n');
   writeText(join(source, 'LICENSE'), 'Synthetic test fixture only.\n');
   writeText(join(source, 'SECURITY.md'), '# Security\n');
   writeText(join(source, 'PRIVACY.md'), '# Privacy\n');
@@ -68,6 +71,7 @@ function syntheticReleaseSource(root) {
   writeText(join(source, 'docs', 'architecture.md'), '# Synthetic architecture\n');
   writeText(join(source, 'test', 'smoke.test.js'), 'export {};\n');
   mkdirSync(join(source, 'scripts'), { recursive: true });
+  writeText(join(source, 'scripts', 'install-wizard.ps1'), "Write-Output 'synthetic'\n");
   mkdirSync(join(source, 'schemas'), { recursive: true });
   cpSync(join(repository, 'scripts', 'scan-release.ps1'), join(source, 'scripts', 'scan-release.ps1'));
   for (const schema of [

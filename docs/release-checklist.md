@@ -81,6 +81,14 @@ Use eight groups of five synthetic questions: exact keyword, Chinese paraphrase,
 
 ## 7. Windows install and rollback
 
+- [ ] A fresh install emits a schema-v2 manifest whose app/config/Skill backups contain complete path, byte-length, and SHA-256 inventories.
+- [ ] Rollback rejects a tampered backup, duplicate Skill entry, mismatched batch path, or reparse/junction before creating quarantine or moving a target.
+- [ ] A legacy schema-v1 manifest can still restore an older installation, with output clearly reporting that hash integrity was unavailable.
+
+- [ ] The release root contains `AGENTS.md`, `START-HERE.md`, `INSTALL.cmd`, and `scripts/install-wizard.ps1`; a fresh Codex can map the short request `安装这个` to the deterministic non-interactive command.
+- [ ] `INSTALL.cmd` invokes only the package-relative wizard; the wizard defaults to Codex-only lexical indexing and requires explicit consent before network access.
+- [ ] `-PlanOnly` performs a zero-write preflight, and missing/ambiguous Vault input in non-interactive mode fails before writes.
+- [ ] The extracted package root, Vault, and installation root cannot contain one another.
 - [ ] Install, semantic initialization, and Vault indexing are separate commands.
 - [ ] Installation requires an explicit Vault path and validates Node, architecture, disk space, Vault root, target containment, and writable local data directory.
 - [ ] Existing ancestors of the project, Vault, InstallRoot, Codex Skill root, and Antigravity Skill root contain no reparse point, symbolic link, or junction.

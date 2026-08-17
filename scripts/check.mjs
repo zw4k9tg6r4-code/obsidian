@@ -1,11 +1,11 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
 
 const root = new URL('..', import.meta.url).pathname.replace(/^\/(?:[A-Za-z]:)/, (value) => value.slice(1));
 const ignored = new Set(['node_modules', '.git', 'coverage', 'dist', 'package-stage', 'private-eval']);
-const textExtensions = new Set(['.js', '.mjs', '.json', '.md', '.ps1', '.yaml', '.yml', '.txt', '.gitattributes', '.gitignore']);
+const textExtensions = new Set(['.js', '.mjs', '.json', '.md', '.ps1', '.cmd', '.yaml', '.yml', '.txt', '.gitattributes', '.gitignore']);
 const forbidden = [
   { name: 'personal Windows path', pattern: /C:\\Users\\/i },
   { name: 'Unix user profile path', pattern: /\/(?:Users|home)\/[^/\s]+\//i },
@@ -53,6 +53,25 @@ const semanticRequirements = readFileSync(join(root, 'requirements-semantic.txt'
 if (!/^fastembed==0\.8\.0$/m.test(semanticRequirements)) failures.push('requirements-semantic.txt: FastEmbed must be pinned exactly to 0.8.0');
 if (!/^onnxruntime==1\.20\.1; platform_system == "Windows"$/m.test(semanticRequirements)) {
   failures.push('requirements-semantic.txt: Windows ONNX Runtime must be pinned exactly to 1.20.1');
+}
+
+const selfGuidedFiles = ['AGENTS.md', 'START-HERE.md', 'INSTALL.cmd'];
+const selfGuidedPresent = selfGuidedFiles.filter((file) => existsSync(join(root, file)));
+if (selfGuidedPresent.length > 0 && selfGuidedPresent.length !== selfGuidedFiles.length) {
+  failures.push('self-guided installer: AGENTS.md, START-HERE.md, and INSTALL.cmd must be present together');
+}
+if (selfGuidedPresent.length === selfGuidedFiles.length) {
+  const installerAgents = readFileSync(join(root, 'AGENTS.md'), 'utf8');
+  if (!installerAgents.includes('install-wizard.ps1') || !installerAgents.includes('-PlanOnly') || !installerAgents.includes('-IndexMode lexical')) {
+    failures.push('AGENTS.md: self-guided install route is incomplete');
+  }
+  const launcher = readFileSync(join(root, 'INSTALL.cmd'), 'utf8');
+  if (!/%SystemRoot%\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe/i.test(launcher) ||
+      !/%INSTALLER_ROOT%scripts\\install-wizard\.ps1/i.test(launcher) ||
+      !/exit \/b %INSTALL_EXIT%/i.test(launcher) ||
+      /%\*|Invoke-Expression|\biex\b/i.test(launcher)) {
+    failures.push('INSTALL.cmd: launcher must use only the fixed package-relative wizard and preserve its exit code');
+  }
 }
 
 const skillPath = join(root, 'skill', 'obsidian-second-brain', 'SKILL.md');
