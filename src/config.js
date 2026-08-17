@@ -80,8 +80,12 @@ export function resolveRuntimeConfig(options = {}) {
   const requestedDataDir = resolve(options.dataDir || process.env.SECOND_BRAIN_DATA_DIR || DEFAULT_DATA_DIR);
   const dataDir = resolveDataDir(options.dataDir, { create: false });
   const localConfig = readLocalConfig(dataDir);
-  const vault = assertVault(options.vault || process.env.SECOND_BRAIN_VAULT || localConfig.vault);
-  if (isPathInside(vault, requestedDataDir)
+  const vaultInput = options.vault || process.env.SECOND_BRAIN_VAULT || localConfig.vault;
+  const requestedVault = vaultInput ? resolve(vaultInput) : vaultInput;
+  const vault = assertVault(vaultInput);
+  if (isPathInside(requestedVault, requestedDataDir)
+    || isPathInside(requestedDataDir, requestedVault)
+    || isPathInside(vault, requestedDataDir)
     || isPathInside(requestedDataDir, vault)
     || isPathInside(vault, dataDir)
     || isPathInside(dataDir, vault)) {

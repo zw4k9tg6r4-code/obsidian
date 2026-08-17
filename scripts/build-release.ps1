@@ -143,6 +143,24 @@ function Write-Utf8NoBom {
     [System.IO.File]::WriteAllText($Path, $Content, $encoding)
 }
 
+function Get-Sha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $algorithm = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+        }
+        finally {
+            $algorithm.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 $sourceInput = Resolve-FullPath -Path $SourceRoot
 [void](Assert-NoReparseTraversal -Path $sourceInput -Label 'release source root')
 $source = Resolve-FullPath -Path $sourceInput -MustExist
@@ -308,8 +326,8 @@ if ((Test-Path -LiteralPath (Join-Path $source '.git')) -and (Get-Command git -E
 $manifestEntries = @()
 foreach ($entry in $planned) {
     $stagedFile = Join-Path $stage ($entry.RelativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar))
-    $sourceHash = (Get-FileHash -LiteralPath $entry.SourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $stagedHash = (Get-FileHash -LiteralPath $stagedFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sourceHash = Get-Sha256 -Path $entry.SourcePath
+    $stagedHash = Get-Sha256 -Path $stagedFile
     if ($sourceHash -ne $stagedHash) {
         throw "Source-to-stage hash mismatch: $($entry.RelativePath)"
     }
@@ -342,7 +360,7 @@ $sumLines = New-Object System.Collections.Generic.List[string]
 foreach ($entry in $manifestEntries) {
     $sumLines.Add("$($entry.sha256)  $($entry.path)")
 }
-$manifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$manifestHash = Get-Sha256 -Path $manifestPath
 $sumLines.Add("$manifestHash  release-manifest.json")
 $sumPath = Join-Path $stage 'SHA256SUMS'
 Write-Utf8NoBom -Path $sumPath -Content (($sumLines | Sort-Object) -join "`n")
@@ -378,7 +396,7 @@ $archiveScan = & $scanner -Path $archive -AllowSyntheticFixtures
     sourceRoot = $source
     stagePath = $stage
     archivePath = $archive
-    archiveSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    archiveSha256 = Get-Sha256 -Path $archive
     sourceFileCount = $planned.Count
     packagedFileCount = $planned.Count + 2
     directoryScan = $directoryScan
