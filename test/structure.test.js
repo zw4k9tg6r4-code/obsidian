@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_STRUCTURE, resolveStructure, historicalPathPattern } from '../src/structure.js';
@@ -25,8 +25,7 @@ const CUSTOM = {
 
 function customVault() {
   const root = mkdtempSync(join(tmpdir(), 'sbrain-structure-'));
-  const vault = join(root, 'vault');
-  for (const dir of [
+  const vault = join(root, 'vault');  for (const dir of [
     'memory',
     'logs',
     'flows',
@@ -56,7 +55,9 @@ function customVault() {
   writeFileSync(join(vault, 'projects', 'alpha', 'process', 'draft.md'), '# Draft\n草稿。\n', 'utf8');
   writeFileSync(join(vault, 'logs', '2026-08.md'), '# Log\n', 'utf8');
   writeFileSync(join(vault, 'flows', 'flow.md'), '# Flow\n', 'utf8');
-  return { root, vault };
+  // CI Windows runners keep the temp dir behind an 8.3 short path (RUNNER~1);
+  // expand it the same way resolveRuntimeConfig does before discovery.
+  return { root, vault: realpathSync.native(vault) };
 }
 
 test('resolveStructure validates overrides and falls back to defaults', () => {
