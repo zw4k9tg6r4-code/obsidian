@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { resolveRuntimeConfig } from './config.js';
 import { assertSafeVaultTree, discoverProjects, resolveProjectScope, collectionsForScope } from './vault.js';
-import { readHealth, lexicalSearch, vectorSearch } from './qmd-adapter.js';
+import { readHealth, lexicalSearch, vectorSearch, withStore } from './qmd-adapter.js';
 import { fuseRankedLists } from './rrf.js';
 import {
   decideEvidence,
@@ -32,7 +32,7 @@ export async function searchSecondBrain(options) {
   const maxEvidence = Math.max(1, Math.min(Number(options.maxEvidence || 4), 4));
   const config = resolveRuntimeConfig(options);
   assertSafeVaultTree(config.vault);
-  const projects = discoverProjects(config.vault);
+  const projects = discoverProjects(config.vault, config.structure);
   const scope = resolveProjectScope(projects, { projectName: options.projectName, query });
 
   if (scope.kind === 'ambiguous' || scope.kind === 'unknown') {
@@ -73,14 +73,24 @@ export async function searchSecondBrain(options) {
     return result;
   }
 
-  const health = await readHealth(config);
-  if (!health.indexed) {
+  const collectionNames = collectionsForScope(scope, temporalIntent);
+  const searchErrors = [];
+  const outcome = await withStore(config, async ({ store }) => {
+    const health = await readHealth(config, { store });
+    if (!health.indexed) return { notIndexed: health };
+    const lists = await lexicalSearch(config, query, collectionNames, Number(options.candidateLimit || 20), {
+      store,
+      onSearchError: (message) => searchErrors.push(message),
+    });
+    return { health, lists };
+  });
+  if (outcome.notIndexed) {
     const result = {
       schemaVersion: 1,
       decision: 'insufficient',
       reason: 'index is not initialized; run sbrain index',
       degraded: true,
-      degradedReason: health.reason,
+      degradedReason: outcome.notIndexed.reason,
       indexFresh: false,
       scope: publicScope(scope),
       temporalIntent,
@@ -92,9 +102,7 @@ export async function searchSecondBrain(options) {
     result.traceId = recordSearchAudit(config, { query, ...result });
     return result;
   }
-
-  const collectionNames = collectionsForScope(scope, temporalIntent);
-  const lists = await lexicalSearch(config, query, collectionNames, Number(options.candidateLimit || 20));
+  const { health, lists } = outcome;
   let semanticFailure = null;
   if (health.semanticHealthy && options.lexicalOnly !== true) {
     const semantic = await vectorSearch(config, query, collectionNames, Number(options.candidateLimit || 20));
@@ -104,10 +112,10 @@ export async function searchSecondBrain(options) {
 
   const fused = fuseRankedLists(lists);
   const opened = [];
-  const sourceErrors = [];
+  const sourceErrors = [...searchErrors];
   for (const result of fused) {
     try {
-      opened.push(openEvidence(result, { vault: config.vault, projects, query }));
+      opened.push(openEvidence(result, { vault: config.vault, projects, query, structure: config.structure }));
     } catch (error) {
       sourceErrors.push(String(error?.message || error));
     }
@@ -119,6 +127,7 @@ export async function searchSecondBrain(options) {
     vault: config.vault,
     projects,
     scope,
+    structure: config.structure,
     max: Math.max(0, Math.min(Number(options.maxRelated ?? 2), 2)),
   });
   const indexFresh = health.indexFresh === true;

@@ -3,33 +3,38 @@ import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from '
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { assertSourcePath, isPathInside } from './config.js';
 import { parseMarkdown, projectForFile } from './vault.js';
+import { DEFAULT_STRUCTURE, historicalPathPattern } from './structure.js';
 
-const HIGH_IMPACT_PATTERN = /(价格|报价|金额|费用|收费|收钱|多少钱|运价|日期|状态|完成|已完成|发布|提交|上传|账号|路径|承诺|时效|截止|合同|库存|政策|权限|删除)/i;
-const HISTORICAL_PATH_PATTERN = /(^|\/)(04-对话纪要|02-过程)(\/|$)/;
-const EXPLICIT_CONFLICT_PATTERN = /(存在冲突|互相矛盾|尚有争议|待裁决|disputed)/i;
+const HIGH_IMPACT_PATTERN = /(价格|报价|金额|费用|收费|收钱|多少钱|运价|日期|状态|完成|已完成|发布|提交|上传|账号|路径|承诺|时效|截止|合同|库存|政策|权限|删除)|\b(price|pricing|cost|fee|quote|quotation|amount|deadline|due\s+date|schedule|date|status|release|deploy|submit|upload|account|password|path|contract|inventory|policy|permission|delete)\b/i;
+const EXPLICIT_CONFLICT_PATTERN = /(存在冲突|互相矛盾|尚有争议|待裁决|disputed)|\b(conflict\w*|contradict\w*|inconsisten\w*|dispute\w*|disagre\w*)\b/i;
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function normalizedRelative(vault, filePath) {
   return relative(vault, filePath).split(sep).join('/');
 }
 
-export function authorityForPath(relativePath) {
-  if (relativePath === 'AGENTS.md') return { level: 'system-rule', score: 100 };
-  if (/^02-项目\/[^/]+\/项目主页\.md$/.test(relativePath)) return { level: 'project-home', score: 95 };
-  if (relativePath.startsWith('01-长期记忆/')) return { level: 'authoritative-memory', score: 92 };
-  if (relativePath.includes('/01-输入/')) return { level: 'primary-input', score: 90 };
-  if (relativePath === '首页.md') return { level: 'system-index', score: 85 };
-  if (relativePath.includes('/03-输出/')) return { level: 'verified-output', score: 82 };
-  if (relativePath.includes('/04-反馈/')) return { level: 'feedback', score: 76 };
-  if (relativePath.startsWith('05-工作流/')) return { level: 'workflow', score: 75 };
-  if (relativePath.includes('/02-过程/')) return { level: 'process', score: 45 };
-  if (relativePath.startsWith('04-对话纪要/')) return { level: 'conversation-history', score: 35 };
+export function authorityForPath(relativePath, structure = DEFAULT_STRUCTURE) {
+  const projectHomePattern = new RegExp(`^${escapeRegex(structure.projectsDir)}/[^/]+/${escapeRegex(structure.projectHome)}$`);
+  if (relativePath === structure.vaultRuleFile) return { level: 'system-rule', score: 100 };
+  if (projectHomePattern.test(relativePath)) return { level: 'project-home', score: 95 };
+  if (relativePath.startsWith(`${structure.memoryDir}/`)) return { level: 'authoritative-memory', score: 92 };
+  if (relativePath.includes(`/${structure.projectInputDir}/`)) return { level: 'primary-input', score: 90 };
+  if (structure.homeNotes.includes(relativePath)) return { level: 'system-index', score: 85 };
+  if (relativePath.includes(`/${structure.projectOutputDir}/`)) return { level: 'verified-output', score: 82 };
+  if (relativePath.includes(`/${structure.projectFeedbackDir}/`)) return { level: 'feedback', score: 76 };
+  if (relativePath.startsWith(`${structure.workflowDir}/`)) return { level: 'workflow', score: 75 };
+  if (relativePath.includes(`/${structure.projectProcessDir}/`)) return { level: 'process', score: 45 };
+  if (relativePath.startsWith(`${structure.conversationDir}/`)) return { level: 'conversation-history', score: 35 };
   return { level: 'note', score: 55 };
 }
 
-function stateFromDocument(frontmatter, text, relativePath) {
+function stateFromDocument(frontmatter, text, relativePath, structure = DEFAULT_STRUCTURE) {
   const raw = String(frontmatter.state || frontmatter.fact_status || '').toLowerCase();
   if (['current', 'superseded', 'expired', 'disputed', 'candidate', 'confirmed'].includes(raw)) return raw;
-  if (HISTORICAL_PATH_PATTERN.test(relativePath)) return 'historical';
+  if (historicalPathPattern(structure).test(relativePath)) return 'historical';
   return 'current';
 }
 
@@ -55,10 +60,16 @@ function normalizedFactText(value) {
   return String(value || '').normalize('NFKC').toLowerCase().replace(/\s+/g, '');
 }
 
+// Strips ASCII and full-width thousands separators ("12,000" ≡ "12000")
+// so grouped and ungrouped numerals compare as the same value.
+function normalizeNumberSeparators(text) {
+  return String(text || '').replace(/(\d)[,，](?=\d{3}(?!\d))/g, '$1');
+}
+
 function numericClaimsByUnit(text) {
   const claims = new Map();
-  const pattern = /(\d+(?:\.\d+)?)\s*(万元|元|块|吨|公斤|千克|kg|托盘|件|箱|天|小时|分钟|日|号|月|%)/giu;
-  for (const match of String(text || '').normalize('NFKC').matchAll(pattern)) {
+  const pattern = /(\d{1,3}(?:[,，]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(万元|元|块|吨|公斤|千克|kg|托盘|件|箱|天|小时|分钟|日|号|月|%)/giu;
+  for (const match of normalizeNumberSeparators(String(text || '').normalize('NFKC')).matchAll(pattern)) {
     let value = Number(match[1]);
     let unit = match[2].toLowerCase();
     if (!Number.isFinite(value)) continue;
@@ -155,7 +166,7 @@ function makeSnippet(lines, centerLine, radius = 3) {
   return { start, end, snippet };
 }
 
-export function openEvidence(result, { vault, projects, query, matchType } = {}) {
+export function openEvidence(result, { vault, projects, query, matchType, structure = DEFAULT_STRUCTURE } = {}) {
   const source = assertSourcePath(vault, result.filepath);
   const fullText = readFileSync(source, 'utf8');
   const lines = fullText.split(/\r?\n/);
@@ -163,9 +174,9 @@ export function openEvidence(result, { vault, projects, query, matchType } = {})
   const { frontmatter } = parseMarkdown(source);
   const center = bestLine(lines, query, result.chunkPos, fullText, result.lineStartHint);
   const range = makeSnippet(lines, center);
-  const authority = authorityForPath(relativePath);
+  const authority = authorityForPath(relativePath, structure);
   const project = projectForFile(projects, source);
-  const state = stateFromDocument(frontmatter, fullText, relativePath);
+  const state = stateFromDocument(frontmatter, fullText, relativePath, structure);
   const contentHash = createHash('sha256').update(fullText).digest('hex');
   const sources = new Set(result.contributions?.map((item) => item.source) || []);
   return {
@@ -223,7 +234,7 @@ function resolveWikiLink(vault, projectDirectory, link) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-export function expandLinkedEvidence(primaryEvidence, { vault, projects, scope, max = 2 } = {}) {
+export function expandLinkedEvidence(primaryEvidence, { vault, projects, scope, structure = DEFAULT_STRUCTURE, max = 2 } = {}) {
   if (scope.kind !== 'project' || max <= 0) return [];
   const output = [];
   const seen = new Set(primaryEvidence.map((item) => item.path));
@@ -242,7 +253,7 @@ export function expandLinkedEvidence(primaryEvidence, { vault, projects, scope, 
         score: 0,
         rrfScore: 0,
         contributions: [],
-      }, { vault, projects, query: link, matchType: 'wiki-link' });
+      }, { vault, projects, query: link, matchType: 'wiki-link', structure });
       output.push(linked);
       if (output.length >= max) return output;
     }
@@ -260,7 +271,7 @@ export function decideEvidence({ query, evidence, scope, indexFresh, temporalInt
     return { decision: 'insufficient', reason: `project scope is ${scope.kind}` };
   }
   if (evidence.length === 0) return { decision: 'insufficient', reason: 'no source evidence' };
-  const conflictIntent = /(冲突|矛盾|争议|不一致|裁决|风险|日期|发车|班车|哪一天|什么时候走)/i.test(query);
+  const conflictIntent = /(冲突|矛盾|争议|不一致|裁决|风险|日期|发车|班车|哪一天|什么时候走)|\b(conflict\w*|contradict\w*|inconsisten\w*|dispute\w*|deadline|due\s+date|schedule|which\s+day)\b/i.test(query);
   const projectIdentity = [scope.project?.name, scope.project?.mainObject]
     .filter(Boolean)
     .map((item) => String(item).normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''));
@@ -288,8 +299,8 @@ export function decideEvidence({ query, evidence, scope, indexFresh, temporalInt
       conflictEvidencePaths: numericConflicts.map((item) => item.path).filter(Boolean),
     };
   }
-  const numericClaims = [...new Set(String(query).normalize('NFKC').match(/\d+(?:\.\d+)?/g) || [])];
-  const openedText = evidence.map((item) => item.snippet).join('\n').normalize('NFKC');
+  const numericClaims = [...new Set(normalizeNumberSeparators(String(query).normalize('NFKC')).match(/\d+(?:\.\d+)?/g) || [])];
+  const openedText = normalizeNumberSeparators(evidence.map((item) => item.snippet).join('\n').normalize('NFKC'));
   if (numericClaims.some((number) => !openedText.includes(number))) {
     return { decision: 'insufficient', reason: 'numeric claim is not present in opened evidence' };
   }

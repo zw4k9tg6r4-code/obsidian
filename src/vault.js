@@ -1,15 +1,12 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 import YAML from 'yaml';
 import { isPathInside } from './config.js';
-
-const PROJECTS_DIR = '02-项目';
-const PROJECT_HOME = '项目主页.md';
-const GLOBAL_GOVERNANCE_PATTERN = '{AGENTS.md,01-长期记忆/用户档案.md,01-长期记忆/合作规则.md}';
+import { DEFAULT_STRUCTURE, braceGlob } from './structure.js';
 
 export function parseMarkdown(filePath) {
-  const text = readFileSync(filePath, 'utf8');
+  const text = readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
   let frontmatter = {};
   let body = text;
   if (text.startsWith('---')) {
@@ -37,8 +34,8 @@ export function stableProjectId(name, portableIdentity) {
   return `project-${digest}`;
 }
 
-export function discoverProjects(vault) {
-  const projectsRootCandidate = join(vault, PROJECTS_DIR);
+export function discoverProjects(vault, structure = DEFAULT_STRUCTURE) {
+  const projectsRootCandidate = join(vault, structure.projectsDir);
   if (!existsSync(projectsRootCandidate) || lstatSync(projectsRootCandidate).isSymbolicLink()) return [];
   const projectsRoot = realpathSync.native(projectsRootCandidate);
   if (!isPathInside(vault, projectsRoot)) return [];
@@ -50,7 +47,7 @@ export function discoverProjects(vault) {
     if (lstatSync(directoryCandidate).isSymbolicLink()) continue;
     const directory = realpathSync.native(directoryCandidate);
     if (!isPathInside(vault, directory)) continue;
-    const homePath = join(directory, PROJECT_HOME);
+    const homePath = join(directory, structure.projectHome);
     if (!existsSync(homePath) || lstatSync(homePath).isSymbolicLink()) continue;
     const { body, frontmatter } = parseMarkdown(homePath);
     const name = String(frontmatter.project || entry.name).trim();
@@ -83,7 +80,7 @@ function positiveMatch(query, project) {
   const q = normalize(query);
   const names = [project.name, project.mainObject]
     .map(normalize)
-    .filter((value) => value.length >= 3);
+    .filter((value) => value.length >= 2);
   return names.some((value) => q.includes(value));
 }
 
@@ -137,18 +134,18 @@ function collection(name, path, pattern = '**/*.md', ignore = []) {
   return { name, path, pattern, ignore, includeByDefault: false };
 }
 
-export function buildCollections(vault, projects) {
+export function buildCollections(vault, projects, structure = DEFAULT_STRUCTURE) {
   const safeCollectionPath = (candidate) => {
     if (!existsSync(candidate) || lstatSync(candidate).isSymbolicLink()) return null;
     const real = realpathSync.native(candidate);
     return isPathInside(vault, real) ? real : null;
   };
   const collections = [
-    collection('global-root', vault, '{AGENTS.md,首页.md}'),
-    collection('global-governance', vault, GLOBAL_GOVERNANCE_PATTERN),
-    collection('global-memory', safeCollectionPath(join(vault, '01-长期记忆'))),
-    collection('global-workflows', safeCollectionPath(join(vault, '05-工作流'))),
-    collection('global-history', safeCollectionPath(join(vault, '04-对话纪要'))),
+    collection('global-root', vault, braceGlob(structure.homeNotes)),
+    collection('global-governance', vault, braceGlob(structure.governanceFiles)),
+    collection('global-memory', safeCollectionPath(join(vault, structure.memoryDir))),
+    collection('global-workflows', safeCollectionPath(join(vault, structure.workflowDir))),
+    collection('global-history', safeCollectionPath(join(vault, structure.conversationDir))),
   ].filter((item) => item.path && existsSync(item.path));
 
   for (const project of projects) {
@@ -156,11 +153,11 @@ export function buildCollections(vault, projects) {
       `${project.id}-current`,
       project.directory,
       '**/*.md',
-      ['02-过程/**']
+      [`${structure.projectProcessDir}/**`]
     ));
     collections.push(collection(
       `${project.id}-history`,
-      join(project.directory, '02-过程'),
+      join(project.directory, structure.projectProcessDir),
       '**/*.md'
     ));
   }
@@ -193,7 +190,7 @@ export function collectionsForScope(scope, temporalIntent = 'current') {
 export function vaultStats(vault) {
   let markdownFiles = 0;
   let bytes = 0;
-  const files = [];
+  const stats = [];
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === '.obsidian') continue;
@@ -206,17 +203,21 @@ export function vaultStats(vault) {
       }
       else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
         markdownFiles += 1;
-        bytes += statSync(full).size;
-        files.push(full);
+        bytes += stat.size;
+        stats.push({ file: full, size: stat.size, mtimeMs: stat.mtimeMs });
       }
     }
   };
   walk(vault);
+  // The fingerprint only gates the disposable derived index, so path+size+mtime
+  // is sufficient and avoids re-reading every file's content on each command.
   const digest = createHash('sha256');
-  for (const file of files.sort((a, b) => a.localeCompare(b, 'en'))) {
-    digest.update(relative(vault, file).split(sep).join('/'));
+  for (const item of stats.sort((a, b) => a.file.localeCompare(b.file, 'en'))) {
+    digest.update(relative(vault, item.file).split(sep).join('/'));
     digest.update('\0');
-    digest.update(readFileSync(file));
+    digest.update(`${item.size}`);
+    digest.update('\0');
+    digest.update(`${item.mtimeMs}`);
     digest.update('\0');
   }
   return { markdownFiles, bytes, contentHash: digest.digest('hex') };

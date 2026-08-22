@@ -8,6 +8,7 @@ import { discoverProjects } from './vault.js';
 import { publicHealth, readHealth } from './qmd-adapter.js';
 import { searchSecondBrain } from './retrieval.js';
 import { addCandidate } from './candidates.js';
+import { VERSION } from './version.js';
 
 function toolResult(value) {
   return {
@@ -26,7 +27,7 @@ function runtime() {
 export function createSecondBrainMcpServer() {
   const server = new McpServer({
     name: 'codex-obsidian-second-brain',
-    version: '0.1.0',
+    version: VERSION,
   });
 
   server.registerTool('second_brain_search', {

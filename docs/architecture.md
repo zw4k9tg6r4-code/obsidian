@@ -27,7 +27,7 @@ The index and candidate queue are disposable. Deleting them never deletes or cha
 
 ## Retrieval order
 
-1. Discover projects from `02-项目/*/项目主页.md`.
+1. Discover projects from `02-项目/*/项目主页.md` (all directory names come from `src/structure.js` and can be overridden per installation via the `structure` section of `config/config.json`).
 2. Resolve an explicit project name or a unique positive identity match.
 3. For project-scoped search, include only the explicit global-governance allowlist (`AGENTS.md`, user profile, cooperation rules), global workflows, and the resolved project collection. Full long-term memory is available only to global search. A contradiction between the explicit scope and another project named in the query abstains before retrieval.
 4. Run BM25 and, when healthy, vector retrieval separately.

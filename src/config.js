@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { DEFAULT_STRUCTURE, resolveStructure } from './structure.js';
 
 export const DEFAULT_DATA_DIR = process.platform === 'win32'
   ? join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'CodexSecondBrain')
@@ -11,15 +12,15 @@ export function isPathInside(root, candidate) {
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
 }
 
-export function assertVault(vaultInput) {
+export function assertVault(vaultInput, ruleFile = DEFAULT_STRUCTURE.vaultRuleFile) {
   if (!vaultInput) {
     throw new Error('Vault path is required. Pass --vault or set SECOND_BRAIN_VAULT.');
   }
   const absolute = resolve(vaultInput);
   if (!existsSync(absolute)) throw new Error(`Vault does not exist: ${absolute}`);
   const vault = realpathSync.native(absolute);
-  if (!existsSync(join(vault, 'AGENTS.md'))) {
-    throw new Error(`Vault root AGENTS.md is missing: ${vault}`);
+  if (!existsSync(join(vault, ruleFile))) {
+    throw new Error(`Vault root ${ruleFile} is missing: ${vault}`);
   }
   return vault;
 }
@@ -80,9 +81,10 @@ export function resolveRuntimeConfig(options = {}) {
   const requestedDataDir = resolve(options.dataDir || process.env.SECOND_BRAIN_DATA_DIR || DEFAULT_DATA_DIR);
   const dataDir = resolveDataDir(options.dataDir, { create: false });
   const localConfig = readLocalConfig(dataDir);
+  const structure = resolveStructure(localConfig.structure);
   const vaultInput = options.vault || process.env.SECOND_BRAIN_VAULT || localConfig.vault;
   const requestedVault = vaultInput ? resolve(vaultInput) : vaultInput;
-  const vault = assertVault(vaultInput);
+  const vault = assertVault(vaultInput, structure.vaultRuleFile);
   if (isPathInside(requestedVault, requestedDataDir)
     || isPathInside(requestedDataDir, requestedVault)
     || isPathInside(vault, requestedDataDir)
@@ -118,7 +120,7 @@ export function resolveRuntimeConfig(options = {}) {
     candidatesDir,
     backupsDir,
     configDir,
-    configPath: join(configDir, 'config.json'),
+    structure,
     dbPath: join(indexDir, 'qmd.sqlite'),
     metadataPath: join(indexDir, 'metadata.json'),
     semanticDbPath: join(indexDir, 'semantic.sqlite'),

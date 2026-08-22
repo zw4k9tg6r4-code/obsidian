@@ -5,13 +5,8 @@ import { resolveRuntimeConfig, assertSourcePath, toVaultRelative } from './confi
 import { discoverProjects } from './vault.js';
 import { indexVault, publicHealth, readHealth, QMD_VERSION } from './qmd-adapter.js';
 import { searchSecondBrain } from './retrieval.js';
-import {
-  activateCandidate,
-  addCandidate,
-  confirmCandidate,
-  listCandidates,
-  markCandidate,
-} from './candidates.js';
+import { activateCandidate, addCandidate, confirmCandidate, listCandidates, markCandidate } from './candidates.js';
+import { VERSION } from './version.js';
 
 function parseArgs(argv) {
   const positional = [];
@@ -63,7 +58,7 @@ function printHuman(command, value) {
 }
 
 function help() {
-  console.log(`Codex Obsidian Second Brain v0.1.0 (QMD ${QMD_VERSION})
+  console.log(`Codex Obsidian Second Brain v${VERSION} (QMD ${QMD_VERSION})
 
 Usage:
   sbrain index [--vault PATH] [--semantic]

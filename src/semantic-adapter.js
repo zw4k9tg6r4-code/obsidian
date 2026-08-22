@@ -11,7 +11,8 @@ export const FASTEMBED_VERSION = '0.8.0';
 function pythonCommand(config) {
   if (process.env.SECOND_BRAIN_PYTHON) return process.env.SECOND_BRAIN_PYTHON;
   if (existsSync(config.semanticPython)) return config.semanticPython;
-  return process.platform === 'win32' ? 'python.exe' : 'python3';
+  // py.exe (the Windows Python launcher) avoids the Microsoft Store python.exe alias.
+  return process.platform === 'win32' ? 'py.exe' : 'python3';
 }
 
 function runPython(config, payload, { timeoutMs = 10 * 60 * 1000 } = {}) {
@@ -97,8 +98,4 @@ export async function searchSemantic(config, query, collectionNames, limit = 20)
       results: [...uniqueSources.values()].slice(0, limit),
     }],
   };
-}
-
-export async function probeSemantic(config) {
-  return runPython(config, { action: 'probe' }, { timeoutMs: 90 * 1000 });
 }

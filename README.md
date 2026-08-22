@@ -66,13 +66,20 @@ sbrain index [--vault PATH] [--semantic]
 sbrain search --query TEXT [--project NAME] [--time current|history] [--max-evidence 4]
 sbrain health [--vault PATH]
 sbrain projects [--vault PATH]
+sbrain source-hash --path FILE [--vault PATH]
 sbrain candidate add --content TEXT --scope PROJECT [--source-ref PATH]
 sbrain candidate confirm --id ID (--user-confirmed | --source-ref PATH)
-sbrain candidate list [--status candidate]
+sbrain candidate activate --id ID --target FILE --expected-hash SHA256 [--supersedes ID]
+sbrain candidate mark --id ID --status expired|disputed [--reason TEXT]
+sbrain candidate list [--status STATE]
 sbrain-mcp
 ```
 
 All CLI commands can emit JSON with `--json`. Search and health never write to the vault. The stdio MCP server exposes search, projects, health, and candidate creation; it intentionally omits confirmation, activation, deletion, and arbitrary file reads.
+
+## Vault structure
+
+The default conventions are `02-项目/*/项目主页.md` for projects, `01-长期记忆/` for long-term memory, `04-对话纪要/` for conversation history, `05-工作流/` for workflows, and `01-输入/`, `02-过程/`, `03-输出/`, `04-反馈/` inside each project. Project directories starting with `_` are skipped. Every convention lives in `src/structure.js` and can be overridden per installation through the optional `structure` section of `config/config.json` (see `schemas/config.schema.json`); unknown keys, absolute paths, and parent traversal are rejected.
 
 ## Verification
 

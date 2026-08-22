@@ -29,13 +29,24 @@ function prepareQmdEnvironment(dataDir) {
 async function openStore(config) {
   prepareQmdEnvironment(config.dataDir);
   const { createStore } = await import('@tobilu/qmd');
-  const projects = discoverProjects(config.vault);
-  const collections = buildCollections(config.vault, projects);
+  const projects = discoverProjects(config.vault, config.structure);
+  const collections = buildCollections(config.vault, projects, config.structure);
   const store = await createStore({
     dbPath: config.dbPath,
     config: qmdConfig(config.vault, collections),
   });
   return { store, projects, collections };
+}
+
+// Opens the index once for a compound read (health + search) instead of paying
+// the store open/close cost for every helper call.
+export async function withStore(config, fn) {
+  const context = await openStore(config);
+  try {
+    return await fn(context);
+  } finally {
+    await context.store.close();
+  }
 }
 
 function materializeResults(results, collectionName, collections) {
@@ -113,7 +124,47 @@ export async function indexVault(config, { semantic = false } = {}) {
   };
 }
 
-export async function readHealth(config) {
+async function collectHealth(config, store) {
+  const [status, health] = await Promise.all([store.getStatus(), store.getIndexHealth()]);
+  let metadata = null;
+  if (existsSync(config.metadataPath)) {
+    try { metadata = JSON.parse(readFileSync(config.metadataPath, 'utf8')); } catch { metadata = null; }
+  }
+  let semanticMetadata = null;
+  if (existsSync(config.semanticMetadataPath)) {
+    try { semanticMetadata = JSON.parse(readFileSync(config.semanticMetadataPath, 'utf8')); } catch { semanticMetadata = null; }
+  }
+  const currentFingerprint = vaultStats(config.vault);
+  const indexFresh = Boolean(metadata?.vaultFingerprint
+    && metadata.vaultFingerprint.markdownFiles === currentFingerprint.markdownFiles
+    && metadata.vaultFingerprint.bytes === currentFingerprint.bytes
+    && metadata.vaultFingerprint.contentHash === currentFingerprint.contentHash);
+  const semanticFresh = Boolean(semanticMetadata?.vaultFingerprint
+    && semanticMetadata.vaultFingerprint.markdownFiles === currentFingerprint.markdownFiles
+    && semanticMetadata.vaultFingerprint.bytes === currentFingerprint.bytes
+    && semanticMetadata.vaultFingerprint.contentHash === currentFingerprint.contentHash);
+  const semanticHealthy = Boolean(existsSync(config.semanticDbPath)
+    && semanticFresh
+    && semanticMetadata?.model === SEMANTIC_MODEL);
+  const vectorCoverage = semanticHealthy ? 1 : 0;
+  return {
+    indexed: true,
+    indexFresh,
+    semanticHealthy,
+    vectorCoverage,
+    degraded: !semanticHealthy || !indexFresh,
+    reason: !indexFresh
+      ? 'vault changed after the last successful index update'
+      : (semanticHealthy ? null : 'local semantic index is missing or stale'),
+    status,
+    health,
+    metadata,
+    semanticMetadata,
+    currentFingerprint,
+  };
+}
+
+export async function readHealth(config, { store: existingStore } = {}) {
   if (!existsSync(config.dbPath)) {
     return {
       indexed: false,
@@ -123,60 +174,26 @@ export async function readHealth(config) {
       reason: 'index database is missing',
     };
   }
+  if (existingStore) return collectHealth(config, existingStore);
   const { store } = await openStore(config);
   try {
-    const [status, health] = await Promise.all([store.getStatus(), store.getIndexHealth()]);
-    let metadata = null;
-    if (existsSync(config.metadataPath)) {
-      try { metadata = JSON.parse(readFileSync(config.metadataPath, 'utf8')); } catch { metadata = null; }
-    }
-    let semanticMetadata = null;
-    if (existsSync(config.semanticMetadataPath)) {
-      try { semanticMetadata = JSON.parse(readFileSync(config.semanticMetadataPath, 'utf8')); } catch { semanticMetadata = null; }
-    }
-    const currentFingerprint = vaultStats(config.vault);
-    const indexFresh = Boolean(metadata?.vaultFingerprint
-      && metadata.vaultFingerprint.markdownFiles === currentFingerprint.markdownFiles
-      && metadata.vaultFingerprint.bytes === currentFingerprint.bytes
-      && metadata.vaultFingerprint.contentHash === currentFingerprint.contentHash);
-    const semanticFresh = Boolean(semanticMetadata?.vaultFingerprint
-      && semanticMetadata.vaultFingerprint.markdownFiles === currentFingerprint.markdownFiles
-      && semanticMetadata.vaultFingerprint.bytes === currentFingerprint.bytes
-      && semanticMetadata.vaultFingerprint.contentHash === currentFingerprint.contentHash);
-    const semanticHealthy = Boolean(existsSync(config.semanticDbPath)
-      && semanticFresh
-      && semanticMetadata?.model === SEMANTIC_MODEL);
-    const vectorCoverage = semanticHealthy ? 1 : 0;
-    return {
-      indexed: true,
-      indexFresh,
-      semanticHealthy,
-      vectorCoverage,
-      degraded: !semanticHealthy || !indexFresh,
-      reason: !indexFresh
-        ? 'vault changed after the last successful index update'
-        : (semanticHealthy ? null : 'local semantic index is missing or stale'),
-      status,
-      health,
-      metadata,
-      semanticMetadata,
-      currentFingerprint,
-    };
+    return await collectHealth(config, store);
   } finally {
     await store.close();
   }
 }
 
-export async function lexicalSearch(config, query, collectionNames, limit = 20) {
-  const { store, collections } = await openStore(config);
-  try {
+export async function lexicalSearch(config, query, collectionNames, limit = 20, { store: existingStore, onSearchError } = {}) {
+  const searchOnce = async (store, collections) => {
     const lists = [];
     for (const collection of collectionNames) {
       for (const variant of lexicalVariants(query)) {
         let raw = [];
         try {
           raw = await store.searchLex(variant.query, { collection, limit });
-        } catch {
+        } catch (error) {
+          // Surface backend failures to the caller instead of silently dropping them.
+          onSearchError?.(String(error?.message || error));
           continue;
         }
         const results = materializeResults(raw, collection, collections);
@@ -189,6 +206,14 @@ export async function lexicalSearch(config, query, collectionNames, limit = 20) 
       }
     }
     return lists;
+  };
+  if (existingStore) {
+    const collections = buildCollections(config.vault, discoverProjects(config.vault, config.structure), config.structure);
+    return searchOnce(existingStore, collections);
+  }
+  const { store, collections } = await openStore(config);
+  try {
+    return await searchOnce(store, collections);
   } finally {
     await store.close();
   }

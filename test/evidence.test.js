@@ -43,3 +43,25 @@ test('numeric claims must appear in the opened evidence', () => {
   });
   assert.equal(assessment.decision, 'insufficient');
 });
+
+test('thousands-separated numerals compare equal to ungrouped evidence', () => {
+  const evidence = [{ sourceOpened: true, authorityScore: 95, state: 'current', snippet: '总费用是 12000 元' }];
+  const assessment = decideEvidence({
+    query: '总费用是不是 12,000 元',
+    evidence,
+    scope: { kind: 'project' },
+    indexFresh: true,
+  });
+  assert.equal(assessment.decision, 'grounded');
+});
+
+test('English high-impact keywords also require an authoritative source', () => {
+  const low = [{ sourceOpened: true, authorityScore: 45, state: 'current', snippet: 'draft price note' }];
+  const assessment = decideEvidence({
+    query: 'what is the current price',
+    evidence: low,
+    scope: { kind: 'project' },
+    indexFresh: true,
+  });
+  assert.equal(assessment.decision, 'insufficient');
+});
