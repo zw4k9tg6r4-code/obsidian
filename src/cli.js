@@ -35,7 +35,14 @@ function parseArgs(argv) {
 }
 
 function option(flags, ...names) {
-  for (const name of names) if (flags[name] !== undefined) return flags[name];
+  for (const name of names) {
+    const value = flags[name];
+    if (value === undefined) continue;
+    // `--flag` followed by another flag stores boolean true; a value option in
+    // that state must fail loudly instead of leaking "true" as the value.
+    if (value === true) throw new Error(`Missing value for --${name}`);
+    return value;
+  }
   return undefined;
 }
 
@@ -62,7 +69,7 @@ function help() {
 
 Usage:
   sbrain index [--vault PATH] [--semantic]
-  sbrain search --query TEXT [--project NAME] [--time current|history] [--max-evidence 4]
+  sbrain search --query TEXT [--project NAME] [--time current|history] [--max-evidence 4] [--max-related 2] [--lexical-only]
   sbrain health [--vault PATH]
   sbrain projects [--vault PATH]
   sbrain source-hash --path FILE [--vault PATH]
@@ -103,7 +110,7 @@ async function main() {
     result = publicHealth(await readHealth(resolveRuntimeConfig(runtimeOptions(flags))));
   } else if (command === 'projects') {
     const config = resolveRuntimeConfig({ ...runtimeOptions(flags), createDataDir: false });
-    result = discoverProjects(config.vault).map(({ id, name, status, updated, mainObject }) => ({ id, name, status, updated, mainObject }));
+    result = discoverProjects(config.vault, config.structure).map(({ id, name, status, updated, mainObject }) => ({ id, name, status, updated, mainObject }));
   } else if (command === 'source-hash') {
     const config = resolveRuntimeConfig({ ...runtimeOptions(flags), createDataDir: false });
     const source = assertSourcePath(config.vault, option(flags, 'path'));

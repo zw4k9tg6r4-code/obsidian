@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_STRUCTURE, resolveStructure, historicalPathPattern } from '../src/structure.js';
-import { buildCollections, discoverProjects, resolveProjectScope } from '../src/vault.js';
+import { buildCollections, discoverProjects, parseMarkdown, resolveProjectScope } from '../src/vault.js';
 import { authorityForPath } from '../src/evidence.js';
 import { resolveRuntimeConfig } from '../src/config.js';
 
@@ -67,9 +67,33 @@ test('resolveStructure validates overrides and falls back to defaults', () => {
   assert.throws(() => resolveStructure({ projectsDir: '/absolute' }), /relative path/);
   assert.throws(() => resolveStructure({ projectsDir: '../outside' }), /relative path/);
   assert.throws(() => resolveStructure({ homeNotes: [] }), /non-empty array/);
+  assert.throws(() => resolveStructure({ projectsDir: '项目,目录' }), /commas or braces/);
+  assert.throws(() => resolveStructure({ governanceFiles: ['规则{1}.md'] }), /commas or braces/);
   const merged = resolveStructure({ projectsDir: 'projects' });
   assert.equal(merged.projectsDir, 'projects');
   assert.equal(merged.memoryDir, DEFAULT_STRUCTURE.memoryDir);
+});
+
+test('frontmatter closing delimiter must be a whole line', () => {
+  const { root } = customVault();
+  const parse = (name, content) => {
+    const path = join(root, name);
+    writeFileSync(path, content, 'utf8');
+    return parseMarkdown(path);
+  };
+  const fourDash = parse('four-dash.md', '---\n状态：草稿\n----\n\n正文保留。\n');
+  assert.deepEqual(fourDash.frontmatter, {});
+  assert.match(fourDash.body, /状态：草稿/);
+  assert.match(fourDash.body, /正文保留/);
+  const inline = parse('inline.md', '---\n开场白\n--- 同一行\n\n正文。\n');
+  assert.match(inline.body, /开场白/);
+  assert.match(inline.body, /正文/);
+  const proper = parse('proper.md', '---\nstatus: active\n---\n正文。\n');
+  assert.equal(proper.frontmatter.status, 'active');
+  assert.equal(proper.body, '正文。\n');
+  const crlf = parse('crlf.md', '---\r\nstatus: paused\r\n---\r\n正文。\r\n');
+  assert.equal(crlf.frontmatter.status, 'paused');
+  assert.equal(crlf.body, '正文。\r\n');
 });
 
 test('custom structure discovers projects and builds matching collections', () => {

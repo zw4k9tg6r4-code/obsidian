@@ -62,9 +62,11 @@ export function createSecondBrainMcpServer() {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   }, async () => {
     const config = runtime();
-    return toolResult(discoverProjects(config.vault).map(({ id, name, status, updated, mainObject }) => ({
+    // structuredContent must be an object per the MCP schema; the bare array
+    // this tool used to return was rejected by every spec-compliant client.
+    return toolResult({ projects: discoverProjects(config.vault, config.structure).map(({ id, name, status, updated, mainObject }) => ({
       id, name, status, updated, mainObject,
-    })));
+    })) });
   });
 
   server.registerTool('second_brain_health', {

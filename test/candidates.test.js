@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveRuntimeConfig } from '../src/config.js';
-import { activateCandidate, addCandidate, confirmCandidate, listCandidates } from '../src/candidates.js';
+import { activateCandidate, addCandidate, confirmCandidate, listCandidates, markCandidate } from '../src/candidates.js';
 
 const fixture = fileURLToPath(new URL('./fixtures/vault', import.meta.url));
 
@@ -94,4 +94,24 @@ test('confirmed candidate becomes current only after verified Markdown write', (
   });
   assert.equal(current.status, 'current');
   assert.match(current.currentSource.path, /项目主页\.md$/);
+});
+
+test('mark revalidates project binding like confirm and activate', () => {
+  const config = sandbox();
+  const added = addCandidate(config, { content: '待标记的候选事实', scope: '北辰仓配项目' });
+  rmSync(join(config.vault, '02-项目', '北辰仓配项目', '项目主页.md'));
+  assert.throws(() => markCandidate(config, { id: added.record.id, status: 'expired' }), /valid project/i);
+  assert.equal(listCandidates(config)[0].status, 'candidate');
+});
+
+test('a stale lock is reclaimed safely and the next write still lands', () => {
+  const config = sandbox();
+  const lock = join(config.candidatesDir, 'records.lock');
+  writeFileSync(lock, 'crashed-writer', 'utf8');
+  const stale = new Date(Date.now() - 60_000);
+  utimesSync(lock, stale, stale);
+  const added = addCandidate(config, { content: '陈旧锁恢复后的写入', scope: '北辰仓配项目' });
+  assert.equal(added.created, true);
+  assert.ok(!existsSync(lock), 'lock must be released after the write');
+  assert.equal(listCandidates(config).length, 1);
 });

@@ -35,7 +35,7 @@ function inCollection(file, collection) {
 }
 
 export function chunkMarkdown(text, { maxChars = 2400, overlapLines = 2 } = {}) {
-  const lines = text.split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
   const chunks = [];
   let contentStart = 0;
   if (lines[0]?.trim() === '---') {
@@ -58,6 +58,16 @@ export function chunkMarkdown(text, { maxChars = 2400, overlapLines = 2 } = {}) 
 
   lines.slice(contentStart).forEach((line, offset) => {
     const index = contentStart + offset;
+    if (line.length > maxChars) {
+      // A single pasted line (logs, base64) must be hard-split by characters;
+      // the line-count guard below would otherwise never flush it.
+      flush(false);
+      for (let cursor = 0; cursor < line.length; cursor += maxChars) {
+        chunks.push({ startLine: index + 1, endLine: index + 1, text: line.slice(cursor, cursor + maxChars) });
+      }
+      start = index + 1;
+      return;
+    }
     const headingBoundary = /^#{1,3}\s+/.test(line) && current.some((item) => item.trim());
     if (headingBoundary) flush(false);
     else if (currentLength + line.length + 1 > maxChars && current.length > overlapLines) flush(true);

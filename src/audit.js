@@ -14,6 +14,20 @@ export function redactText(value) {
   return output;
 }
 
+// Error strings surfaced to MCP clients must honor the same no-local-paths
+// promise the health tool makes: replace absolute filesystem locations with
+// opaque placeholders.
+export function redactLocalPaths(value, ...knownRoots) {
+  let output = String(value ?? '');
+  for (const root of knownRoots.filter(Boolean)) {
+    output = output.split(String(root)).join('[local-path]');
+  }
+  return output
+    .replace(/\\\\[^\\/"\s]+\\[^"\s]*/g, '[local-path]')
+    .replace(/[A-Za-z]:\\[^\s"']*/g, '[local-path]')
+    .replace(/\/(?:Users|home|tmp|var|opt|etc)\/[^\s"']*/g, '[local-path]');
+}
+
 export function hashQuery(query) {
   return createHash('sha256').update(String(query)).digest('hex');
 }

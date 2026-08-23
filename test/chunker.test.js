@@ -23,6 +23,22 @@ test('chunkMarkdown flushes oversized chunks with overlap', () => {
   assert.ok(chunks.every((chunk) => chunk.text.length <= 2400));
 });
 
+test('oversized single lines are hard-split instead of forming one giant chunk', () => {
+  const text = `# 标题\n\n${'长'.repeat(10_000)}\n\n结尾行\n`;
+  const chunks = chunkMarkdown(text, { maxChars: 2400 });
+  assert.ok(chunks.length >= 5);
+  assert.ok(chunks.every((chunk) => chunk.text.length <= 2400));
+  assert.match(chunks.at(-1).text, /结尾行/);
+});
+
+test('BOM-prefixed notes skip frontmatter in semantic chunks', () => {
+  const text = '\uFEFF---\ntitle: x\n---\n\n正文内容\n';
+  const chunks = chunkMarkdown(text);
+  assert.equal(chunks.length, 1);
+  assert.ok(!chunks[0].text.includes('title'));
+  assert.match(chunks[0].text, /正文内容/);
+});
+
 test('collectSemanticChunks only includes files that belong to a collection', () => {
   const projects = discoverProjects(vault);
   const collections = buildCollections(vault, projects);

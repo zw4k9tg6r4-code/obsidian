@@ -26,6 +26,11 @@ function assertRelativePath(key, value) {
     || normalized.split('/').includes('..') || normalized === '.') {
     throw new Error(`structure.${key} must be a relative path inside the vault: ${value}`);
   }
+  // These paths are joined into comma-separated brace globs and matched back by
+  // splitting on commas, so commas and braces cannot be represented faithfully.
+  if ([...normalized].some((char) => char === ',' || char === '{' || char === '}')) {
+    throw new Error(`structure.${key} must not contain commas or braces: ${value}`);
+  }
 }
 
 export function resolveStructure(overrides) {

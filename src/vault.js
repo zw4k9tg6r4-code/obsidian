@@ -10,15 +10,18 @@ export function parseMarkdown(filePath) {
   let frontmatter = {};
   let body = text;
   if (text.startsWith('---')) {
-    const end = text.indexOf('\n---', 3);
-    if (end !== -1) {
-      const raw = text.slice(3, end).trim();
+    // The closing delimiter must be a whole `---` line; `----` rules or
+    // `--- inline text` are body content, not frontmatter terminators.
+    const rest = text.slice(3);
+    const match = rest.match(/\r?\n---[ \t]*(?:\r?\n|$)/);
+    if (match) {
+      const raw = rest.slice(0, match.index).trim();
       try {
         frontmatter = YAML.parse(raw) || {};
       } catch {
         frontmatter = {};
       }
-      body = text.slice(end + 4).replace(/^\r?\n/, '');
+      body = rest.slice(match.index + match[0].length);
     }
   }
   return { text, body, frontmatter };

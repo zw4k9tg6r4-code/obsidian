@@ -2,6 +2,22 @@
 
 ## 0.1.3 - 2026-08-22
 
+- Pass configured structure overrides to `sbrain projects` and the MCP project listing so custom layouts no longer return an empty list.
+- Wrap the MCP `second_brain_projects` payload as `{ projects: [...] }`; the bare array violated the MCP `structuredContent` schema and was rejected by spec-compliant clients.
+- Reject non-numeric `--max-evidence` and `--max-related` values instead of degrading into an empty, misleading `insufficient` result.
+- Confirm an initialized index (database plus metadata) before opening the lexical store, so search no longer creates an index database as a side effect and the `sbrain index` guidance is reachable.
+- Require a value for value-taking CLI options; `--query --json` now fails with `Missing value for --query` instead of searching for the literal text `true`, and the help text lists `--max-related` and `--lexical-only`.
+- Redact absolute local paths from `degradedReason` error strings returned to MCP clients, matching the no-local-paths promise of the health tool.
+- Claim stale store locks through an atomic rename verified against the measured lock, so concurrent CLI/MCP writers cannot delete each other's fresh lock and silently lose a candidate record.
+- Revalidate the project binding in `candidate mark` exactly like confirm/activate, and take the store lock in `candidate list` so the corrupt-store quarantine is a guarded write.
+- Require the frontmatter closing delimiter to be a whole `---` line, so `----` horizontal rules and `--- inline text` in note bodies are no longer swallowed as YAML.
+- Hard-split oversized single lines by characters in the semantic chunker (pasted logs or base64 can no longer form one giant chunk) and strip a UTF-8 BOM before chunking so frontmatter is skipped consistently with parsing.
+- Reject commas and braces in configured structure paths; they cannot be represented in the comma-separated brace globs and silently broke collection matching.
+
+- Pass configured structure overrides to `sbrain projects` and the MCP project listing so custom layouts no longer return an empty list.
+- Wrap the MCP `second_brain_projects` payload as `{ projects: [...] }`; the bare array violated the MCP `structuredContent` schema and was rejected by spec-compliant clients.
+- Reject non-numeric `--max-evidence` and `--max-related` values instead of degrading into an empty, misleading `insufficient` result.
+- Confirm an initialized index (database plus metadata) before opening the lexical store, so search no longer creates an index database as a side effect and the `sbrain index` guidance is reachable.
 - Centralize every vault-structure convention in `src/structure.js` and allow per-installation overrides through the optional `structure` section of `config/config.json`; align `schemas/config.schema.json` with what the runtime actually reads.
 - Parse YAML frontmatter on Windows notes saved with a UTF-8 BOM so project status and identity fields no longer degrade silently.
 - Let two-character project names participate in automatic positive scope matching.

@@ -236,9 +236,13 @@ export function activateCandidate(config, { id, targetPath, expectedHash, supers
 
 export function markCandidate(config, { id, status, reason = '' }) {
   if (!['expired', 'disputed'].includes(status)) throw new Error('Manual status must be expired or disputed.');
+  const projects = discoverProjects(config.vault, config.structure);
   return withJsonLock(lockPath(config), () => {
     const store = load(config);
     const record = requireRecord(store, id);
+    // Same binding re-validation as confirm/activate: a record whose project
+    // vanished must not silently mutate through the weaker mark path.
+    requireRecordProject(projects, record);
     if (!ALLOWED_STATES.has(record.status)) throw new Error(`Invalid current state: ${record.status}`);
     const from = record.status;
     const now = new Date().toISOString();
@@ -252,6 +256,10 @@ export function markCandidate(config, { id, status, reason = '' }) {
 }
 
 export function listCandidates(config, { status } = {}) {
-  const records = load(config).records;
-  return status ? records.filter((item) => item.status === status) : records;
+  // The lock makes the corrupt-store quarantine inside load() a guarded write
+  // instead of an unlocked rename racing concurrent candidate writers.
+  return withJsonLock(lockPath(config), () => {
+    const records = load(config).records;
+    return status ? records.filter((item) => item.status === status) : records;
+  });
 }

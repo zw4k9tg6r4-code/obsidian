@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -136,6 +136,49 @@ test('maxEvidence cannot hide a conflict found in the broader candidate set', as
   assert.ok(result.conflicts.length >= 2);
   assert.ok(result.conflicts.some((item) => item.path.endsWith('/冲突报价.md')));
   assert.ok(result.conflicts.some((item) => item.snippet.includes('120 元')));
+});
+
+test('search on an uninitialized data dir points to indexing and writes no index files', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'sbrain-unindexed-'));
+  const config = resolveRuntimeConfig({ vault, dataDir: join(root, 'data') });
+  const result = await searchSecondBrain({
+    vault,
+    dataDir: config.dataDir,
+    query: '标准仓储服务费 每托盘 120 元',
+    projectName: '北辰仓配项目',
+    lexicalOnly: true,
+  });
+  assert.equal(result.decision, 'insufficient');
+  assert.equal(result.reason, 'index is not initialized; run sbrain index');
+  assert.equal(result.degraded, true);
+  assert.ok(!existsSync(config.dbPath), 'search must not create the index database');
+  assert.ok(!existsSync(config.metadataPath));
+});
+
+test('non-numeric evidence limits are rejected instead of silently emptying results', async () => {
+  const config = await indexedSandbox();
+  await assert.rejects(
+    searchSecondBrain({
+      vault,
+      dataDir: config.dataDir,
+      query: '标准仓储服务费 每托盘 120 元',
+      projectName: '北辰仓配项目',
+      lexicalOnly: true,
+      maxEvidence: 'abc',
+    }),
+    /Invalid numeric option/,
+  );
+  await assert.rejects(
+    searchSecondBrain({
+      vault,
+      dataDir: config.dataDir,
+      query: '标准仓储服务费 每托盘 120 元',
+      projectName: '北辰仓配项目',
+      lexicalOnly: true,
+      maxRelated: 'not-a-number',
+    }),
+    /Invalid numeric option/,
+  );
 });
 
 test('requested semantic initialization fails closed when the worker fails', () => {
