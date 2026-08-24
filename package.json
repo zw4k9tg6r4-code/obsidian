@@ -59,5 +59,8 @@
     "@tobilu/qmd": "2.5.3",
     "yaml": "2.9.0",
     "zod": "4.2.1"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0"
   }
 }

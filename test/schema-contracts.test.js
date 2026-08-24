@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, cpSync, mkdtempSync } from 'node:fs';
+import { readFileSync, writeFileSync, cpSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,7 +63,7 @@ test('schema contract: full Draft 2020-12 validation of publicHealth against hea
   assert.equal(valid, true, `publicHealth must strictly validate against health-v2.schema.json`);
 });
 
-test('schema contract: full Draft 2020-12 validation of searchResult against evidence.schema.json', async () => {
+test('schema contract: full Draft 2020-12 validation of searchResult for clean lexical retrieval', async () => {
   const { vault, dataDir, config } = createSyntheticEnv();
   await indexVault(config, { semantic: false });
 
@@ -83,7 +83,42 @@ test('schema contract: full Draft 2020-12 validation of searchResult against evi
   const valid = validate(searchResult);
 
   if (!valid) {
-    console.error('Validation errors for searchResult:', validate.errors);
+    console.error('Validation errors for clean searchResult:', validate.errors);
   }
-  assert.equal(valid, true, `searchResult must strictly validate against evidence.schema.json`);
+  assert.equal(valid, true, `clean searchResult must strictly validate against evidence.schema.json`);
+});
+
+test('schema contract: full Draft 2020-12 validation of dirty overlay search response', async () => {
+  const { vault, dataDir, config } = createSyntheticEnv();
+  await indexVault(config, { semantic: false });
+
+  // 1. Write an unindexed dirty note in project
+  const overlayFile = join(vault, '02-项目', '北辰仓配项目', '01-输入', '未同步草案.md');
+  writeFileSync(overlayFile, '# 草案\n\n新议定专线包月单价为8888元。\n', 'utf8');
+
+  // 2. Search for the keyword that exists ONLY in the dirty overlay file
+  const overlaySearchResult = await searchSecondBrain({
+    vault,
+    dataDir,
+    query: '专线包月单价',
+    projectName: '北辰仓配项目',
+    lexicalOnly: true,
+  });
+
+  assert.equal(overlaySearchResult.decision, 'grounded');
+  assert.ok(overlaySearchResult.evidence.length >= 1);
+  assert.equal(overlaySearchResult.evidence[0].matchType, 'overlay');
+
+  // 3. Strictly validate full Draft 2020-12 evidence schema on overlay response
+  const schemaRaw = readFileSync(fileURLToPath(new URL('../schemas/evidence.schema.json', import.meta.url)), 'utf8');
+  const schema = JSON.parse(schemaRaw);
+
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  const validate = ajv.compile(schema);
+  const valid = validate(overlaySearchResult);
+
+  if (!valid) {
+    console.error('Validation errors for overlay searchResult:', validate.errors);
+  }
+  assert.equal(valid, true, `overlay searchResult must strictly validate against evidence.schema.json`);
 });
