@@ -36,6 +36,7 @@ test('MCP exposes bounded read tools and candidate-only write', async (t) => {
     'second_brain_health',
     'second_brain_projects',
     'second_brain_search',
+    'second_brain_sync',
   ]);
 
   const search = await client.callTool({
