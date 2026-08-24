@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { existsSync, readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { resolveRuntimeConfig, toVaultRelative } from './config.js';
 import { assertSafeVaultTree, discoverProjects, resolveProjectScope, collectionsForScope } from './vault.js';
 import { readHealth, lexicalSearch, vectorSearch, withStore, lexicalVariants } from './qmd-adapter.js';
@@ -69,6 +69,19 @@ function runInMemoryOverlay(dirtyFilesInScope, query) {
   }
   overlayResults.sort((a, b) => b.score - a.score);
   return overlayResults;
+}
+
+function safeVaultRelative(vaultRoot, filePath) {
+  if (!filePath) return null;
+  try {
+    const normalizedVault = resolve(vaultRoot).split('\\').join('/');
+    const normalizedFile = resolve(filePath).split('\\').join('/');
+    if (normalizedFile === normalizedVault) return '';
+    if (normalizedFile.startsWith(normalizedVault + '/')) {
+      return normalizedFile.slice(normalizedVault.length + 1);
+    }
+  } catch {}
+  return null;
 }
 
 export async function searchSecondBrain(options) {
@@ -183,8 +196,10 @@ export async function searchSecondBrain(options) {
     ...l,
     results: l.results.filter((r) => {
       const relPath = (r.displayPath || '').split('\\').join('/');
-      const vaultRel = r.filepath ? toVaultRelative(config.vault, r.filepath) : null;
-      const isDirty = dirtyVaultPaths.has(relPath)
+      const vaultRel = safeVaultRelative(config.vault, r.filepath);
+      const isFileDeleted = r.filepath ? !existsSync(r.filepath) : false;
+      const isDirty = isFileDeleted
+        || dirtyVaultPaths.has(relPath)
         || (vaultRel && dirtyVaultPaths.has(vaultRel))
         || dirtyFilesInScope.some((d) => relPath.endsWith(d.path) || d.path.endsWith(relPath));
       return !isDirty;
@@ -215,8 +230,10 @@ export async function searchSecondBrain(options) {
         ...l,
         results: l.results.filter((r) => {
           const relPath = (r.displayPath || '').split('\\').join('/');
-          const vaultRel = r.filepath ? toVaultRelative(config.vault, r.filepath) : null;
-          const isDirty = dirtyVaultPaths.has(relPath)
+          const vaultRel = safeVaultRelative(config.vault, r.filepath);
+          const isFileDeleted = r.filepath ? !existsSync(r.filepath) : false;
+          const isDirty = isFileDeleted
+            || dirtyVaultPaths.has(relPath)
             || (vaultRel && dirtyVaultPaths.has(vaultRel))
             || dirtyFilesInScope.some((d) => relPath.endsWith(d.path) || d.path.endsWith(relPath));
           return !isDirty;

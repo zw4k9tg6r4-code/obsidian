@@ -172,6 +172,20 @@ export async function syncSemantic(config, collections, targetCollectionNames, {
 
   const records = collectSemanticChunks(config.vault, collections);
   const targetRecords = records.filter((r) => r.collections.some((c) => targetCollectionNames.includes(c)));
+
+  if (mode === 'auto' && budgetMs < 100) {
+    return {
+      ok: true,
+      action: 'sync',
+      mode: 'auto',
+      embedded: 0,
+      reused: 0,
+      pending: targetRecords.length,
+      skipped: false,
+      reason: 'embedding skipped due to zero or near-zero budget in auto mode',
+    };
+  }
+
   const result = await runPython(config, {
     action: 'sync',
     records: targetRecords,

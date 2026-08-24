@@ -263,8 +263,8 @@ export async function syncVault(config, {
       }
     }
 
-    const semanticOk = semanticResult.ok === true;
-    const topLevelOk = semanticMode === 'always' ? semanticOk : true;
+    const semanticOk = semanticResult.ok === true && semanticResult.skipped !== true;
+    const topLevelOk = semanticMode === 'always' ? (semanticResult.ok === true && semanticResult.skipped !== true) : true;
 
     const newMetadata = {
       schemaVersion: 2,
@@ -276,11 +276,12 @@ export async function syncVault(config, {
       collectionCount: collections.length,
       semanticRequested: semanticMode !== 'never',
       semanticReady: semanticOk,
-      semanticReason: semanticResult.ok ? null : semanticResult.reason,
+      semanticReason: semanticOk ? null : (semanticResult.reason || null),
     };
     writeJsonAtomic(config.metadataPath, newMetadata);
 
     return {
+      schemaVersion: 2,
       ok: topLevelOk,
       generationId: lock.generationId,
       syncedCollections: targetCollectionNames,

@@ -5,6 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schemaVersion",
     "ok",
     "generationId",
     "syncedCollections",
@@ -16,6 +17,7 @@
     "elapsedMs"
   ],
   "properties": {
+    "schemaVersion": { "const": 2 },
     "ok": { "type": "boolean" },
     "generationId": { "type": "string" },
     "syncedCollections": {

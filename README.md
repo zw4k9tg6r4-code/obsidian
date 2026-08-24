@@ -63,7 +63,8 @@ The [research notes](docs/research-notes.md) record which open-source mechanisms
 
 ```text
 sbrain index [--vault PATH] [--semantic]
-sbrain search --query TEXT [--project NAME] [--time current|history] [--max-evidence 4]
+sbrain sync [--project NAME] [--time current|history] [--semantic auto|always|never] [--budget MS]
+sbrain search --query TEXT [--project NAME] [--time current|history] [--max-evidence 4] [--lexical-only]
 sbrain health [--vault PATH]
 sbrain projects [--vault PATH]
 sbrain source-hash --path FILE [--vault PATH]
@@ -75,7 +76,10 @@ sbrain candidate list [--status STATE]
 sbrain-mcp
 ```
 
-All CLI commands can emit JSON with `--json`. Search and health never write to the vault. The stdio MCP server exposes search, projects, health, and candidate creation; it intentionally omits confirmation, activation, deletion, and arbitrary file reads.
+All CLI commands can emit JSON with `--json`.
+- `sbrain sync`: Incrementally synchronizes lexical QMD collections and optional semantic embeddings with generation locks and pre/post snapshot dirty verification. `--budget` specifies the embedding batch computation time budget in milliseconds.
+- `sbrain search`: Read-only multi-source retrieval with RRF fusion, dirty-path filtering, and real-time in-memory overlay for modified unindexed notes.
+- Search and health never write to the vault. The stdio MCP server exposes search, sync (`second_brain_sync`), projects, health, and candidate creation; it intentionally omits confirmation, activation, deletion, and arbitrary file reads.
 
 ## Vault structure
 

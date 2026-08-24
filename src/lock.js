@@ -92,10 +92,33 @@ export async function acquireSyncLock(config, { timeoutMs = 10000, maxStaleMs = 
           const claim = `${path}.${process.pid}.${randomUUID()}.claim`;
           try {
             renameSync(path, claim);
+            let claimedData = null;
             try {
-              unlinkSync(claim);
+              claimedData = JSON.parse(readFileSync(claim, 'utf8'));
             } catch {}
-            continue;
+
+            const isSameStaleLock = claimedData && existing && (
+              claimedData.token === existing.token &&
+              claimedData.pid === existing.pid &&
+              claimedData.generationId === existing.generationId
+            );
+
+            if (isSameStaleLock || (claimedData && !isPidAlive(claimedData.pid))) {
+              try {
+                unlinkSync(claim);
+              } catch {}
+              continue;
+            } else {
+              // Lock changed between check and rename to a new active lock; restore it safely
+              try {
+                if (!existsSync(path)) {
+                  renameSync(claim, path);
+                } else {
+                  unlinkSync(claim);
+                }
+              } catch {}
+              continue;
+            }
           } catch {
             // Another waiter already claimed or renamed the lock file; retry immediately
           }
