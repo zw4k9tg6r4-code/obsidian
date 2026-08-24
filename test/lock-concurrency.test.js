@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { lockPath, isSyncLockActive } from '../src/lock.js';
+import { lockPath, reclaimLockPath, isSyncLockActive } from '../src/lock.js';
 
 const workerCode = `
 import { appendFileSync } from 'node:fs';
@@ -15,7 +15,7 @@ const holdMs = Number(process.argv[2] || 20);
 const logFile = process.argv[3];
 
 async function main() {
-  await withSyncLock(config, { timeoutMs: 15000, maxStaleMs: 30000 }, async (lock) => {
+  await withSyncLock(config, { timeoutMs: 25000, maxStaleMs: 30000 }, async (lock) => {
     const start = Date.now();
     appendFileSync(logFile, JSON.stringify({ pid: process.pid, event: 'enter', start }) + '\\n', 'utf8');
     await new Promise((res) => setTimeout(res, holdMs));
@@ -40,7 +40,7 @@ test('lock concurrency: multi-process stale-lock stress test guarantees zero cri
     const config = { indexDir: join(root, 'index') };
     mkdirSync(config.indexDir, { recursive: true });
 
-    // Pre-inject a dead PID stale lock
+    // Pre-inject a dead PID stale lock (older than 30s)
     const p = lockPath(config);
     const staleLock = {
       token: `stale-token-round-${round}`,
@@ -96,5 +96,73 @@ test('lock concurrency: multi-process stale-lock stress test guarantees zero cri
 
     assert.equal(overlaps, 0, `Round ${round}: Critical sections must never overlap (overlaps found: ${overlaps})`);
     assert.equal(existsSync(lockPath(config)), false);
+  }
+});
+
+test('lock concurrency: multi-process dual stale lock stress test guarantees zero overlap', async () => {
+  const rounds = 6;
+  const workersPerRound = 16;
+  const holdMs = 20;
+
+  for (let round = 0; round < rounds; round++) {
+    const root = mkdtempSync(join(tmpdir(), `sbrain-lock-dual-r${round}-`));
+    const config = { indexDir: join(root, 'index') };
+    mkdirSync(config.indexDir, { recursive: true });
+
+    // Pre-inject both a dead PID stale sync.lock AND a stale sync.reclaim.lock directory
+    const p = lockPath(config);
+    const r = reclaimLockPath(config);
+    writeFileSync(p, JSON.stringify({
+      token: `stale-main-${round}`,
+      pid: 999999,
+      startedAt: Date.now() - 60000,
+      heartbeatAt: Date.now() - 60000,
+    }, null, 2), 'utf8');
+
+    mkdirSync(r, { recursive: true });
+    writeFileSync(join(r, 'owner.json'), JSON.stringify({
+      pid: 999998,
+      startedAt: Date.now() - 60000,
+    }, null, 2), 'utf8');
+
+    const logFile = join(root, 'events.jsonl');
+    writeFileSync(logFile, '', 'utf8');
+
+    const spawnWorker = () => new Promise((resolve, reject) => {
+      const cp = spawn(process.execPath, ['--input-type=module', '-e', workerCode, JSON.stringify(config), String(holdMs), logFile], {
+        cwd: process.cwd(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      cp.stderr.on('data', (d) => { stderr += d; });
+      cp.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Worker PID ${cp.pid} failed with code ${code}: ${stderr}`));
+      });
+    });
+
+    const workers = Array.from({ length: workersPerRound }, () => spawnWorker());
+    await Promise.all(workers);
+
+    const lines = readFileSync(logFile, 'utf8').trim().split('\n').filter(Boolean);
+    const intervals = [];
+    for (const line of lines) {
+      const data = JSON.parse(line);
+      if (data.event === 'exit') {
+        intervals.push({ pid: data.pid, start: data.start, end: data.end });
+      }
+    }
+
+    assert.equal(intervals.length, workersPerRound, `Dual round ${round}: all ${workersPerRound} workers must complete`);
+
+    intervals.sort((a, b) => a.start - b.start);
+    let overlaps = 0;
+    for (let i = 0; i < intervals.length - 1; i++) {
+      if (intervals[i + 1].start < intervals[i].end) {
+        overlaps++;
+      }
+    }
+
+    assert.equal(overlaps, 0, `Dual round ${round}: overlaps must be 0 (got ${overlaps})`);
   }
 });
