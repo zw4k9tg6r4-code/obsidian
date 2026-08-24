@@ -1,6 +1,7 @@
-import { existsSync, openSync, closeSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { existsSync, openSync, closeSync, readFileSync, renameSync, unlinkSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { writeJsonAtomic } from './io.js';
 
 export function isPidAlive(pid) {
   if (!pid || typeof pid !== 'number') return false;
@@ -38,6 +39,7 @@ export function isSyncLockActive(config, { maxStaleMs = 30000 } = {}) {
 
 export async function acquireSyncLock(config, { timeoutMs = 10000, maxStaleMs = 30000 } = {}) {
   const path = lockPath(config);
+  mkdirSync(dirname(path), { recursive: true });
   const start = Date.now();
   const token = randomBytes(16).toString('hex');
   const generationId = `gen-${Date.now()}-${randomBytes(4).toString('hex')}`;
@@ -60,7 +62,7 @@ export async function acquireSyncLock(config, { timeoutMs = 10000, maxStaleMs = 
           const current = readSyncLock(config);
           if (current && current.token === token) {
             current.heartbeatAt = Date.now();
-            writeFileSync(path, JSON.stringify(current, null, 2), 'utf8');
+            writeJsonAtomic(path, current);
           }
         } catch {}
       }, 5000);
@@ -83,19 +85,27 @@ export async function acquireSyncLock(config, { timeoutMs = 10000, maxStaleMs = 
     } catch (err) {
       if (err.code === 'EEXIST') {
         const existing = readSyncLock(config);
-        const isDead = !existing || !isPidAlive(existing.pid);
+        const isDead = existing && !isPidAlive(existing.pid);
         const isStale = existing && (Date.now() - (existing.heartbeatAt || existing.startedAt || 0) > maxStaleMs);
 
         if (isDead || isStale) {
-          try { unlinkSync(path); } catch {}
-          continue;
+          const claim = `${path}.${process.pid}.${randomUUID()}.claim`;
+          try {
+            renameSync(path, claim);
+            try {
+              unlinkSync(claim);
+            } catch {}
+            continue;
+          } catch {
+            // Another waiter already claimed or renamed the lock file; retry immediately
+          }
         }
 
         if (Date.now() - start > timeoutMs) {
           throw new Error(`Sync lock acquisition timed out after ${timeoutMs}ms (held by PID ${existing?.pid})`);
         }
 
-        await new Promise((res) => setTimeout(res, 200));
+        await new Promise((res) => setTimeout(res, 100));
         continue;
       }
       throw err;

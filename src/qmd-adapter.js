@@ -169,7 +169,7 @@ export async function syncVault(config, {
         if (temporalIntent === 'current') {
           targetCollectionNames = ['global-governance', 'global-workflows', `${scope.project.id}-current`];
         } else if (temporalIntent === 'history') {
-          targetCollectionNames = [`${scope.project.id}-history`];
+          targetCollectionNames = ['global-governance', 'global-workflows', `${scope.project.id}-current`, `${scope.project.id}-history`];
         } else {
           targetCollectionNames = ['global-governance', 'global-workflows', `${scope.project.id}-current`, `${scope.project.id}-history`];
         }
@@ -180,7 +180,7 @@ export async function syncVault(config, {
       if (temporalIntent === 'current') {
         targetCollectionNames = collections.filter((c) => !c.name.endsWith('-history') && c.name !== 'global-history').map((c) => c.name);
       } else if (temporalIntent === 'history') {
-        targetCollectionNames = collections.filter((c) => c.name.endsWith('-history') || c.name === 'global-history').map((c) => c.name);
+        targetCollectionNames = collections.map((c) => c.name);
       } else {
         targetCollectionNames = collections.map((c) => c.name);
       }
@@ -191,6 +191,15 @@ export async function syncVault(config, {
       try { metadata = JSON.parse(readFileSync(config.metadataPath, 'utf8')); } catch { metadata = null; }
     }
     const metaFiles = metadata?.files || {};
+
+    // Snapshot tracked files BEFORE sync
+    const trackedBeforeSync = collectTrackedFiles(config.vault, collections);
+    const snapshotBefore = new Map();
+    for (const item of trackedBeforeSync) {
+      const text = readFileSync(item.fullPath, 'utf8');
+      const hash = createHash('sha256').update(text).digest('hex');
+      snapshotBefore.set(item.rel, { ...item, contentHash: hash });
+    }
 
     const { dirtyFiles } = detectVaultChanges(config.vault, collections, metaFiles);
     const targetDirty = dirtyFiles.filter((d) => d.collections.some((c) => targetCollectionNames.includes(c)));
@@ -214,11 +223,20 @@ export async function syncVault(config, {
       });
     }
 
-    const recheck = detectVaultChanges(config.vault, collections, metaFiles);
-    const recheckDirty = recheck.dirtyFiles.filter((d) => d.collections.some((c) => targetCollectionNames.includes(c)));
-    const sourceChangedDuringSync = recheckDirty.length > 0 && affectedCollections.length > 0;
+    // Snapshot tracked files AFTER sync to check for concurrent writes during sync
+    const trackedAfterSync = collectTrackedFiles(config.vault, collections);
+    const changedDuringSync = [];
+    for (const item of trackedAfterSync) {
+      if (!item.collections.some((c) => targetCollectionNames.includes(c))) continue;
+      const text = readFileSync(item.fullPath, 'utf8');
+      const hashAfter = createHash('sha256').update(text).digest('hex');
+      const before = snapshotBefore.get(item.rel);
+      if (!before || before.contentHash !== hashAfter) {
+        changedDuringSync.push(item.rel);
+      }
+    }
+    const sourceChangedDuringSync = changedDuringSync.length > 0;
 
-    const trackedFiles = collectTrackedFiles(config.vault, collections);
     const updatedFilesMap = { ...metaFiles };
 
     for (const item of dirtyFiles.filter((d) => d.status === 'deleted')) {
@@ -226,19 +244,27 @@ export async function syncVault(config, {
         delete updatedFilesMap[item.path];
       }
     }
-    for (const item of trackedFiles) {
+    for (const item of trackedAfterSync) {
       if (item.collections.some((c) => targetCollectionNames.includes(c))) {
-        const text = readFileSync(item.fullPath, 'utf8');
-        updatedFilesMap[item.rel] = {
-          size: item.size,
-          mtimeMs: item.mtimeMs,
-          contentHash: createHash('sha256').update(text).digest('hex'),
-          collections: item.collections,
-          timeScope: item.timeScope,
-          generation: lock.generationId,
-        };
+        if (changedDuringSync.includes(item.rel)) {
+          continue;
+        }
+        const before = snapshotBefore.get(item.rel);
+        if (before) {
+          updatedFilesMap[item.rel] = {
+            size: before.size,
+            mtimeMs: before.mtimeMs,
+            contentHash: before.contentHash,
+            collections: before.collections,
+            timeScope: before.timeScope,
+            generation: lock.generationId,
+          };
+        }
       }
     }
+
+    const semanticOk = semanticResult.ok === true;
+    const topLevelOk = semanticMode === 'always' ? semanticOk : true;
 
     const newMetadata = {
       schemaVersion: 2,
@@ -249,13 +275,13 @@ export async function syncVault(config, {
       projectCount: projects.length,
       collectionCount: collections.length,
       semanticRequested: semanticMode !== 'never',
-      semanticReady: semanticResult.ok === true,
+      semanticReady: semanticOk,
       semanticReason: semanticResult.ok ? null : semanticResult.reason,
     };
     writeJsonAtomic(config.metadataPath, newMetadata);
 
     return {
-      ok: true,
+      ok: topLevelOk,
       generationId: lock.generationId,
       syncedCollections: targetCollectionNames,
       affectedCollections,
@@ -283,7 +309,7 @@ async function collectHealth(config, store) {
   const collections = buildCollections(config.vault, projects, config.structure);
   const metaFiles = metadata?.files || {};
 
-  const { dirtyFiles, trackedMap } = detectVaultChanges(config.vault, collections, metaFiles);
+  const { dirtyFiles } = detectVaultChanges(config.vault, collections, metaFiles);
 
   const historyCollections = collections.filter((c) => c.name.endsWith('-history') || c.name === 'global-history').map((c) => c.name);
   const currentCollections = collections.filter((c) => !c.name.endsWith('-history') && c.name !== 'global-history').map((c) => c.name);
@@ -294,13 +320,14 @@ async function collectHealth(config, store) {
   const currentLexicalFresh = dirtyCurrent.length === 0 && metadata !== null;
   const historyLexicalFresh = dirtyHistory.length === 0 && metadata !== null;
 
-  const isSemanticConfigured = existsSync(config.semanticDbPath) && semanticMetadata?.model === SEMANTIC_MODEL;
-  const currentSemanticHealthy = Boolean(isSemanticConfigured && currentLexicalFresh && (semanticMetadata?.pending ?? 0) === 0);
-  const historySemanticHealthy = Boolean(isSemanticConfigured && historyLexicalFresh);
+  const { calculateSemanticHealth } = await import('./semantic-adapter.js');
+  const semanticHealth = calculateSemanticHealth(config, collections);
+  const isSemanticConfigured = semanticHealth.available && semanticMetadata?.model === SEMANTIC_MODEL;
+  const currentSemanticHealthy = Boolean(isSemanticConfigured && currentLexicalFresh && semanticHealth.currentPending === 0);
+  const historySemanticHealthy = Boolean(isSemanticConfigured && historyLexicalFresh && semanticHealth.historyPending === 0);
 
-  const currentPendingChunks = semanticMetadata?.pending ?? 0;
-  const currentVectorCoverage = currentSemanticHealthy ? 1 : 0;
-  const historyVectorCoverage = historySemanticHealthy ? 1 : (isSemanticConfigured ? 0.98 : 0);
+  const currentVectorCoverage = isSemanticConfigured ? semanticHealth.currentCoverage : 0;
+  const historyVectorCoverage = isSemanticConfigured ? semanticHealth.historyCoverage : 0;
 
   const currentDegraded = !currentLexicalFresh || !currentSemanticHealthy || (currentVectorCoverage < 1);
   const currentReason = !currentLexicalFresh
@@ -323,7 +350,7 @@ async function collectHealth(config, store) {
       semanticHealthy: currentSemanticHealthy,
       vectorCoverage: currentVectorCoverage,
       pendingFiles: dirtyCurrent.length,
-      pendingChunks: currentPendingChunks,
+      pendingChunks: semanticHealth.currentPending,
       degraded: currentDegraded,
       reason: currentReason,
     },
@@ -332,7 +359,7 @@ async function collectHealth(config, store) {
       semanticHealthy: historySemanticHealthy,
       vectorCoverage: historyVectorCoverage,
       pendingFiles: dirtyHistory.length,
-      pendingChunks: 0,
+      pendingChunks: semanticHealth.historyPending,
       degraded: false,
       reason: historyReason,
     },

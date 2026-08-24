@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/codex-obsidian-second-brain/sync-result.schema.json",
+  "title": "Second Brain Sync Result Schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ok",
+    "generationId",
+    "syncedCollections",
+    "affectedCollections",
+    "updatedFiles",
+    "sourceChangedDuringSync",
+    "semantic",
+    "metadata",
+    "elapsedMs"
+  ],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "generationId": { "type": "string" },
+    "syncedCollections": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "affectedCollections": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "updatedFiles": { "type": "integer", "minimum": 0 },
+    "sourceChangedDuringSync": { "type": "boolean" },
+    "semantic": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "elapsedMs": { "type": "number", "minimum": 0 }
+  }
+}

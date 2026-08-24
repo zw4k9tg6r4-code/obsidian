@@ -98,12 +98,25 @@ async function main() {
     const config = resolveRuntimeConfig(runtimeOptions(flags));
     result = await indexVault(config, { semantic: flags.semantic === true });
   } else if (command === 'sync') {
+    const timeVal = option(flags, 'time');
+    if (timeVal && !['current', 'history', 'all'].includes(timeVal)) {
+      throw new Error(`Invalid --time option: ${timeVal}. Expected current, history, or all.`);
+    }
+    const semVal = option(flags, 'semantic');
+    if (semVal && !['auto', 'always', 'never'].includes(semVal)) {
+      throw new Error(`Invalid --semantic option: ${semVal}. Expected auto, always, or never.`);
+    }
+    const budgetRaw = option(flags, 'budget');
+    const budgetMs = budgetRaw !== undefined ? Number(budgetRaw) : 10000;
+    if (Number.isNaN(budgetMs) || budgetMs < 0) {
+      throw new Error(`Invalid --budget option: ${budgetRaw}. Must be a non-negative number.`);
+    }
     const config = resolveRuntimeConfig(runtimeOptions(flags));
     result = await syncVault(config, {
       projectName: option(flags, 'project'),
-      temporalIntent: option(flags, 'time') || 'current',
-      semanticMode: option(flags, 'semantic') || 'auto',
-      budgetMs: Number(option(flags, 'budget') || 10000),
+      temporalIntent: timeVal || 'current',
+      semanticMode: semVal || 'auto',
+      budgetMs,
     });
   } else if (command === 'search') {
     result = await searchSecondBrain({

@@ -17,15 +17,17 @@ def read_request():
 
 def model_for(request):
     cache_dir = Path(request["dataDir"]) / "models" / "fastembed"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return TextEmbedding(model_name=MODEL, cache_dir=str(cache_dir), threads=4)
+    if not cache_dir.exists() and os.environ.get("LOCALAPPDATA"):
+        default_cache = Path(os.environ["LOCALAPPDATA"]) / "CodexSecondBrain" / "models" / "fastembed"
+        if default_cache.exists():
+            cache_dir = default_cache
+    return TextEmbedding(model_name=MODEL, cache_dir=str(cache_dir), threads=4, local_files_only=True)
 
 
 def initialize(db_path):
     connection = sqlite3.connect(db_path)
     connection.execute("PRAGMA journal_mode=WAL")
 
-    # Check if existing table needs migration to include chunk_text_hash
     table_info = connection.execute("PRAGMA table_info(chunks)").fetchall()
     if table_info:
         column_names = {row[1] for row in table_info}
@@ -91,7 +93,6 @@ def sync(request):
 
         embedded_records = []
         pending_records = []
-        vectors = []
         dim = existing_rows[0][4] if existing_rows else 0
 
         if mode == "never":
@@ -99,24 +100,43 @@ def sync(request):
         else:
             model = None
             start_time = time.perf_counter()
-            batch_size = 16
+            deadline = start_time + (budget_ms / 1000.0)
 
-            for i in range(0, len(needed_embed), batch_size):
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                if mode == "auto" and i > 0 and elapsed_ms >= budget_ms:
-                    pending_records.extend(needed_embed[i:])
-                    break
+            if mode == "auto" and budget_ms < 500:
+                pending_records = needed_embed
+            else:
+                cursor = 0
+                avg_time_per_item = 0.05
+                while cursor < len(needed_embed):
+                    now = time.perf_counter()
+                    remaining = deadline - now
+                    if mode == "auto" and remaining <= 0:
+                        pending_records.extend(needed_embed[cursor:])
+                        break
 
-                batch = needed_embed[i : i + batch_size]
-                if model is None:
-                    model = model_for(request)
-                batch_vectors = embed_documents(model, [r["text"] for r in batch])
-                if batch_vectors and dim == 0:
-                    dim = int(batch_vectors[0].shape[0])
-                for r, v in zip(batch, batch_vectors):
-                    embedded_records.append((r, v))
+                    batch_size = min(16, len(needed_embed) - cursor)
+                    if mode == "auto" and cursor > 0 and remaining < (batch_size * avg_time_per_item):
+                        batch_size = max(1, int(remaining / avg_time_per_item))
+                        if batch_size == 0 or remaining < 0.05:
+                            pending_records.extend(needed_embed[cursor:])
+                            break
 
-        # Commit SQLite transaction
+                    batch = needed_embed[cursor : cursor + batch_size]
+                    if model is None:
+                        model = model_for(request)
+
+                    batch_start = time.perf_counter()
+                    batch_vectors = embed_documents(model, [r["text"] for r in batch])
+                    batch_elapsed = time.perf_counter() - batch_start
+                    avg_time_per_item = 0.7 * avg_time_per_item + 0.3 * (batch_elapsed / max(1, len(batch)))
+
+                    if batch_vectors and dim == 0:
+                        dim = int(batch_vectors[0].shape[0])
+                    for r, v in zip(batch, batch_vectors):
+                        embedded_records.append((r, v))
+                    cursor += len(batch)
+
+        # Commit SQLite transaction atomically
         with connection:
             # 1. Insert newly embedded records
             for r, v in embedded_records:
@@ -149,18 +169,33 @@ def sync(request):
                     ),
                 )
 
-            # 3. Delete obsolete chunks for the synced files
-            all_target_paths = {r["relativePath"] for r in records}
+            # 3. Clean up deleted files and collection migrations
             active_ids = {r["id"] for r in records}
-            if all_target_paths:
-                placeholders = ",".join("?" for _ in all_target_paths)
-                existing_for_paths = connection.execute(
-                    f"SELECT id, relative_path FROM chunks WHERE relative_path IN ({placeholders})",
-                    list(all_target_paths),
+            records_by_id = {r["id"]: r for r in records}
+            if synced_collections:
+                all_chunks_in_db = connection.execute(
+                    "SELECT id, collections, relative_path FROM chunks"
                 ).fetchall()
-                for cid, rel in existing_for_paths:
-                    if cid not in active_ids:
-                        connection.execute("DELETE FROM chunks WHERE id = ?", (cid,))
+                for cid, coll_json, rel in all_chunks_in_db:
+                    chunk_colls = set(json.loads(coll_json))
+                    overlap = chunk_colls.intersection(synced_collections)
+                    if overlap:
+                        if cid in active_ids:
+                            new_colls = records_by_id[cid]["collections"]
+                            if set(new_colls) != chunk_colls:
+                                connection.execute(
+                                    "UPDATE chunks SET collections = ? WHERE id = ?",
+                                    (json.dumps(new_colls, ensure_ascii=False), cid),
+                                )
+                        else:
+                            remaining_colls = list(chunk_colls - synced_collections)
+                            if remaining_colls:
+                                connection.execute(
+                                    "UPDATE chunks SET collections = ? WHERE id = ?",
+                                    (json.dumps(remaining_colls, ensure_ascii=False), cid),
+                                )
+                            else:
+                                connection.execute("DELETE FROM chunks WHERE id = ?", (cid,))
 
     finally:
         connection.close()
@@ -177,16 +212,9 @@ def sync(request):
 
 
 def index(request):
-    # Full index delegates to sync with mode=always
     req = dict(request)
     req["mode"] = "always"
-    req["budgetMs"] = 1000000
-    connection = initialize(request["dbPath"])
-    try:
-        with connection:
-            connection.execute("DELETE FROM chunks")
-    finally:
-        connection.close()
+    req["budgetMs"] = 10000000.0
     return sync(req)
 
 
