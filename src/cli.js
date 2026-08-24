@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolveRuntimeConfig, assertSourcePath, toVaultRelative } from './config.js';
 import { discoverProjects } from './vault.js';
-import { indexVault, publicHealth, readHealth, QMD_VERSION } from './qmd-adapter.js';
+import { indexVault, syncVault, publicHealth, readHealth, QMD_VERSION } from './qmd-adapter.js';
 import { searchSecondBrain } from './retrieval.js';
 import { activateCandidate, addCandidate, confirmCandidate, listCandidates, markCandidate } from './candidates.js';
 import { VERSION } from './version.js';
@@ -69,6 +69,7 @@ function help() {
 
 Usage:
   sbrain index [--vault PATH] [--semantic]
+  sbrain sync [--project NAME] [--time current|history|all] [--semantic auto|always|never]
   sbrain search --query TEXT [--project NAME] [--time current|history] [--max-evidence 4] [--max-related 2] [--lexical-only]
   sbrain health [--vault PATH]
   sbrain projects [--vault PATH]
@@ -96,6 +97,14 @@ async function main() {
   if (command === 'index') {
     const config = resolveRuntimeConfig(runtimeOptions(flags));
     result = await indexVault(config, { semantic: flags.semantic === true });
+  } else if (command === 'sync') {
+    const config = resolveRuntimeConfig(runtimeOptions(flags));
+    result = await syncVault(config, {
+      projectName: option(flags, 'project'),
+      temporalIntent: option(flags, 'time') || 'current',
+      semanticMode: option(flags, 'semantic') || 'auto',
+      budgetMs: Number(option(flags, 'budget') || 10000),
+    });
   } else if (command === 'search') {
     result = await searchSecondBrain({
       ...runtimeOptions(flags),
