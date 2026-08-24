@@ -154,6 +154,7 @@ export async function syncVault(config, {
   temporalIntent = 'current',
   semanticMode = 'auto',
   budgetMs = 10000,
+  _testHookAfterSnapshot,
 } = {}) {
   assertSafeVaultTree(config.vault);
   const startedAt = Date.now();
@@ -199,6 +200,10 @@ export async function syncVault(config, {
       const text = readFileSync(item.fullPath, 'utf8');
       const hash = createHash('sha256').update(text).digest('hex');
       snapshotBefore.set(item.rel, { ...item, contentHash: hash });
+    }
+
+    if (typeof _testHookAfterSnapshot === 'function') {
+      await _testHookAfterSnapshot();
     }
 
     const { dirtyFiles } = detectVaultChanges(config.vault, collections, metaFiles);

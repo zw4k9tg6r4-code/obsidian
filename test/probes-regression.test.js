@@ -195,20 +195,22 @@ test('P2-1 probe: deterministic concurrent write during sync is detected and rem
 
   const quotePath = join(vault, '02-项目', '北辰仓配项目', '01-输入', '当前报价.md');
 
-  // Perform controlled sync where a concurrent edit occurs after initial snapshot
-  const { withStore } = await import('../src/qmd-adapter.js');
+  // Trigger concurrent edit precisely during sync after snapshotBefore is taken
   const syncRes = await syncVault(config, {
     projectName: '北辰仓配项目',
     temporalIntent: 'current',
     semanticMode: 'never',
+    _testHookAfterSnapshot: async () => {
+      writeFileSync(quotePath, readFileSync(quotePath, 'utf8') + '\n\n- 2026-08-24 确定性同步中途并发修改测试。\n', 'utf8');
+    },
   });
 
-  // Now simulate concurrent write before next check
-  writeFileSync(quotePath, readFileSync(quotePath, 'utf8') + '\n\n- 2026-08-24 确定性并发修改测试。\n', 'utf8');
+  // 1. Unconditionally assert that sync detected the concurrent modification
+  assert.equal(syncRes.sourceChangedDuringSync, true, 'syncVault must detect concurrent file modification during sync');
 
-  // Verify that subsequent health check flags this file as dirty
+  // 2. Unconditionally assert that health check flags this file as dirty
   const health = await readHealth(config);
-  assert.equal(health.current.lexicalFresh, false, 'File modified must be detected as dirty');
+  assert.equal(health.current.lexicalFresh, false, 'File modified during sync must remain dirty');
   assert.ok(health.current.pendingFiles >= 1, 'Pending files must be at least 1');
 });
 

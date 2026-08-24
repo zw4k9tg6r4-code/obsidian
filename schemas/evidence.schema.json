@@ -148,6 +148,8 @@
         },
         "authorityScore": { "type": "integer", "minimum": 0, "maximum": 100 },
         "asOf": { "type": ["string", "null"] },
+        "effectiveAt": { "type": ["string", "null"] },
+        "recordedAt": { "type": ["string", "null"] },
         "state": {
           "enum": [
             "candidate",

@@ -34,7 +34,7 @@
     "vectorCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
     "degraded": { "type": "boolean" },
     "reason": { "type": ["string", "null"] },
-    "qmdVersion": { "type": "string" },
+    "qmdVersion": { "type": ["string", "null"] },
     "indexedAt": { "type": ["string", "null"] },
     "semanticModel": { "type": ["string", "null"] },
     "status": { "type": "object" },
