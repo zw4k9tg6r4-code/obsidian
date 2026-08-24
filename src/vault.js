@@ -242,6 +242,133 @@ export function assertSafeVaultTree(vault) {
   return true;
 }
 
+export function inCollection(file, collection) {
+  if (!isPathInside(collection.path, file)) return false;
+  const rel = relative(collection.path, file).split(sep).join('/');
+  if (collection.pattern.startsWith('{')) {
+    const names = collection.pattern.slice(1, -1).split(',');
+    if (!names.includes(rel)) return false;
+  } else if (!rel.toLowerCase().endsWith('.md')) {
+    return false;
+  }
+  for (const ignore of collection.ignore || []) {
+    const prefix = ignore.replace(/\*\*.*$/, '').replace(/\/$/, '');
+    if (prefix && (rel === prefix || rel.startsWith(`${prefix}/`))) return false;
+  }
+  return true;
+}
+
+export function collectTrackedFiles(vault, collections) {
+  const tracked = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === '.obsidian') continue;
+      const full = join(dir, entry.name);
+      const stat = lstatSync(full);
+      if (stat.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        const real = realpathSync.native(full);
+        if (isPathInside(vault, real)) walk(real);
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+        const real = realpathSync.native(full);
+        if (!isPathInside(vault, real)) continue;
+        const matched = collections.filter((c) => inCollection(real, c)).map((c) => c.name);
+        if (matched.length === 0) continue;
+        const rel = relative(vault, real).split(sep).join('/');
+        const isHistoryOnly = matched.every((c) => c.endsWith('-history') || c === 'global-history');
+        tracked.push({
+          rel,
+          fullPath: real,
+          size: stat.size,
+          mtimeMs: stat.mtimeMs,
+          collections: matched,
+          timeScope: isHistoryOnly ? 'history' : 'current',
+        });
+      }
+    }
+  };
+  walk(vault);
+  return tracked.sort((a, b) => a.rel.localeCompare(b.rel, 'en'));
+}
+
+export function detectVaultChanges(vault, collections, metadataFiles = {}) {
+  const currentTracked = collectTrackedFiles(vault, collections);
+  const meta = metadataFiles || {};
+  const dirtyFiles = [];
+  const trackedMap = new Map();
+
+  for (const item of currentTracked) {
+    const existing = meta[item.rel];
+    if (!existing) {
+      const text = readFileSync(item.fullPath, 'utf8');
+      const contentHash = createHash('sha256').update(text).digest('hex');
+      const dirty = {
+        path: item.rel,
+        fullPath: item.fullPath,
+        status: 'added',
+        size: item.size,
+        mtimeMs: item.mtimeMs,
+        collections: item.collections,
+        timeScope: item.timeScope,
+        contentHash,
+        text,
+      };
+      dirtyFiles.push(dirty);
+      trackedMap.set(item.rel, {
+        size: item.size,
+        mtimeMs: item.mtimeMs,
+        contentHash,
+        collections: item.collections,
+        timeScope: item.timeScope,
+      });
+    } else {
+      const collectionsChanged = JSON.stringify(existing.collections?.slice().sort()) !== JSON.stringify(item.collections.slice().sort());
+      const candidateChanged = existing.size !== item.size || Math.abs(existing.mtimeMs - item.mtimeMs) > 1 || collectionsChanged || !existing.contentHash;
+      if (candidateChanged) {
+        const text = readFileSync(item.fullPath, 'utf8');
+        const contentHash = createHash('sha256').update(text).digest('hex');
+        if (contentHash !== existing.contentHash || collectionsChanged) {
+          const dirty = {
+            path: item.rel,
+            fullPath: item.fullPath,
+            status: 'modified',
+            size: item.size,
+            mtimeMs: item.mtimeMs,
+            collections: item.collections,
+            timeScope: item.timeScope,
+            contentHash,
+            text,
+          };
+          dirtyFiles.push(dirty);
+        }
+        trackedMap.set(item.rel, {
+          size: item.size,
+          mtimeMs: item.mtimeMs,
+          contentHash,
+          collections: item.collections,
+          timeScope: item.timeScope,
+        });
+      } else {
+        trackedMap.set(item.rel, existing);
+      }
+    }
+  }
+
+  for (const [rel, record] of Object.entries(meta)) {
+    if (!trackedMap.has(rel)) {
+      dirtyFiles.push({
+        path: rel,
+        status: 'deleted',
+        collections: record.collections || [],
+        timeScope: record.timeScope || 'current',
+        contentHash: record.contentHash,
+      });
+    }
+  }
+
+  return { dirtyFiles, trackedMap };
+}
+
 export function vaultRelative(vault, path) {
   return relative(vault, path).split(sep).join('/');
 }

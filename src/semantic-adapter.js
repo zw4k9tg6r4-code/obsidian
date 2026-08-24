@@ -1,16 +1,32 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { collectSemanticChunks } from './chunker.js';
 import { writeJsonAtomic } from './io.js';
 
 export const SEMANTIC_MODEL = 'BAAI/bge-small-zh-v1.5';
 export const FASTEMBED_VERSION = '0.8.0';
 
+export function isSemanticRuntimeConfigured(config) {
+  const py = pythonCommand(config);
+  const pyExists = existsSync(py);
+  const localModel = join(config.dataDir, 'models', 'fastembed');
+  const defaultModel = process.env.LOCALAPPDATA
+    ? join(process.env.LOCALAPPDATA, 'CodexSecondBrain', 'models', 'fastembed')
+    : null;
+  const modelExists = existsSync(localModel) || Boolean(defaultModel && existsSync(defaultModel));
+  return Boolean(pyExists && modelExists);
+}
+
 function pythonCommand(config) {
   if (process.env.SECOND_BRAIN_PYTHON) return process.env.SECOND_BRAIN_PYTHON;
   if (existsSync(config.semanticPython)) return config.semanticPython;
+  const defaultPython = process.platform === 'win32'
+    ? join(process.env.LOCALAPPDATA || '', 'CodexSecondBrain', 'runtime', '.venv', 'Scripts', 'python.exe')
+    : join(process.env.HOME || '', '.local', 'share', 'CodexSecondBrain', 'runtime', '.venv', 'bin', 'python');
+  if (existsSync(defaultPython)) return defaultPython;
   // py.exe (the Windows Python launcher) avoids the Microsoft Store python.exe alias.
   return process.platform === 'win32' ? 'py.exe' : 'python3';
 }
@@ -24,6 +40,8 @@ function runPython(config, payload, { timeoutMs = 10 * 60 * 1000 } = {}) {
         PYTHONUTF8: '1',
         PYTHONIOENCODING: 'utf-8',
         TOKENIZERS_PARALLELISM: 'false',
+        HF_HUB_OFFLINE: '1',
+        TRANSFORMERS_OFFLINE: '1',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
@@ -57,29 +75,154 @@ function runPython(config, payload, { timeoutMs = 10 * 60 * 1000 } = {}) {
   });
 }
 
+export function calculateSemanticHealth(config, collections) {
+  if (!existsSync(config.semanticDbPath)) {
+    return { available: false, currentCoverage: 0, historyCoverage: 0, currentPending: 0, historyPending: 0, totalChunksInDb: 0 };
+  }
+  let db;
+  try {
+    db = new DatabaseSync(config.semanticDbPath, { readOnly: true });
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chunks'").all();
+    if (tables.length === 0) {
+      db.close();
+      return { available: false, currentCoverage: 0, historyCoverage: 0, currentPending: 0, historyPending: 0, totalChunksInDb: 0 };
+    }
+    const rows = db.prepare('SELECT id, collections, source_hash FROM chunks').all();
+    db.close();
+
+    if (rows.length === 0) {
+      return { available: false, currentCoverage: 0, historyCoverage: 0, currentPending: 0, historyPending: 0, totalChunksInDb: 0 };
+    }
+
+    const dbChunkMap = new Map();
+    for (const r of rows) {
+      dbChunkMap.set(r.id, {
+        collections: new Set(JSON.parse(r.collections || '[]')),
+        sourceHash: r.source_hash,
+      });
+    }
+
+    const allRecords = collectSemanticChunks(config.vault, collections);
+    const historyColls = collections.filter((c) => c.name.endsWith('-history') || c.name === 'global-history').map((c) => c.name);
+    const currentColls = collections.filter((c) => !c.name.endsWith('-history') && c.name !== 'global-history').map((c) => c.name);
+
+    const currentExpected = allRecords.filter((r) => r.collections.some((c) => currentColls.includes(c)));
+    const historyExpected = allRecords.filter((r) => r.collections.some((c) => historyColls.includes(c)));
+
+    const currentValid = currentExpected.filter((r) => {
+      const existing = dbChunkMap.get(r.id);
+      return existing && existing.sourceHash === r.sourceHash;
+    });
+    const historyValid = historyExpected.filter((r) => {
+      const existing = dbChunkMap.get(r.id);
+      return existing && existing.sourceHash === r.sourceHash;
+    });
+
+    const currentCoverage = currentExpected.length > 0 ? (currentValid.length / currentExpected.length) : 1;
+    const historyCoverage = historyExpected.length > 0 ? (historyValid.length / historyExpected.length) : 1;
+    const currentPending = currentExpected.length - currentValid.length;
+    const historyPending = historyExpected.length - historyValid.length;
+
+    return {
+      available: true,
+      currentCoverage: Number(currentCoverage.toFixed(4)),
+      historyCoverage: Number(historyCoverage.toFixed(4)),
+      currentPending,
+      historyPending,
+      totalChunksInDb: rows.length,
+    };
+  } catch {
+    if (db) try { db.close(); } catch {}
+    return { available: false, currentCoverage: 0, historyCoverage: 0, currentPending: 0, historyPending: 0, totalChunksInDb: 0 };
+  }
+}
+
 export async function indexSemantic(config, collections, vaultFingerprint) {
   const records = collectSemanticChunks(config.vault, collections);
-  const result = await runPython(config, { action: 'index', records }, { timeoutMs: 30 * 60 * 1000 });
+  const result = await runPython(config, {
+    action: 'index',
+    records,
+    syncedCollections: collections.map((c) => c.name),
+  }, { timeoutMs: 30 * 60 * 1000 });
   if (result.ok) {
     writeJsonAtomic(config.semanticMetadataPath, {
-      schemaVersion: 1,
+      schemaVersion: 2,
       model: SEMANTIC_MODEL,
       fastembedVersion: FASTEMBED_VERSION,
       indexedAt: new Date().toISOString(),
       vaultFingerprint,
       sourceFiles: new Set(records.map((item) => item.relativePath)).size,
       chunks: records.length,
+      embedded: result.embedded ?? records.length,
+      reused: result.reused ?? 0,
+      pending: result.pending ?? 0,
       dimensions: result.dimensions,
     });
   }
   return result;
 }
 
-export async function searchSemantic(config, query, collectionNames, limit = 20) {
+export async function syncSemantic(config, collections, targetCollectionNames, { mode = 'auto', budgetMs = 10000 } = {}) {
+  if (!isSemanticRuntimeConfigured(config)) {
+    if (mode === 'auto') {
+      return { ok: true, skipped: true, reason: 'semantic runtime or model not configured' };
+    }
+    return { ok: false, reason: 'semantic runtime or model not configured. Run scripts/setup-semantic.ps1 first.' };
+  }
+
+  const records = collectSemanticChunks(config.vault, collections);
+  const targetRecords = records.filter((r) => r.collections.some((c) => targetCollectionNames.includes(c)));
+
+  if (mode === 'auto' && budgetMs < 100) {
+    return {
+      ok: true,
+      action: 'sync',
+      mode: 'auto',
+      embedded: 0,
+      reused: 0,
+      pending: targetRecords.length,
+      skipped: false,
+      reason: 'embedding skipped due to zero or near-zero budget in auto mode',
+    };
+  }
+
+  const result = await runPython(config, {
+    action: 'sync',
+    records: targetRecords,
+    syncedCollections: targetCollectionNames,
+    mode,
+    budgetMs,
+  }, { timeoutMs: Math.max(budgetMs + 5000, 15000) });
+
+  if (result.ok) {
+    let prevMeta = null;
+    if (existsSync(config.semanticMetadataPath)) {
+      try { prevMeta = JSON.parse(readFileSync(config.semanticMetadataPath, 'utf8')); } catch {}
+    }
+    const metadata = {
+      schemaVersion: 2,
+      model: SEMANTIC_MODEL,
+      fastembedVersion: FASTEMBED_VERSION,
+      indexedAt: new Date().toISOString(),
+      sourceFiles: new Set(targetRecords.map((item) => item.relativePath)).size,
+      chunks: targetRecords.length,
+      embedded: result.embedded ?? 0,
+      reused: result.reused ?? 0,
+      pending: result.pending ?? 0,
+      dimensions: result.dimensions || prevMeta?.dimensions || 0,
+    };
+    writeJsonAtomic(config.semanticMetadataPath, metadata);
+  }
+  return result;
+}
+
+export async function searchSemantic(config, query, collectionNames, limit = 20, { excludePaths = [], validSourceHashes = [] } = {}) {
   const result = await runPython(config, {
     action: 'search',
     query,
     collectionNames,
+    excludePaths,
+    validSourceHashes,
     limit: Math.min(Math.max(limit * 4, limit), 100),
   }, { timeoutMs: 90 * 1000 });
   if (!result.ok) return result;

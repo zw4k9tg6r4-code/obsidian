@@ -60,6 +60,10 @@ powershell -NoProfile -File .\scripts\scan-release.ps1 `
 - [ ] Every evidence path is Vault-relative, remains inside the resolved Vault after real-path resolution, opens successfully, and has a valid line range and content hash.
 - [ ] `grounded` requires opened current authoritative evidence; missing/weak evidence returns `insufficient`; active-source contradictions return `conflict` without silent arbitration.
 - [ ] Missing semantic runtime/model, stale coverage, source-open failure, or index failure is surfaced as degraded mode; fallback never becomes an ungrounded answer.
+- [ ] Incremental sync (`sbrain sync`) updates only modified collections, cleans deleted note slices, and respects batch time budgets.
+- [ ] Generation locking prevents race conditions with atomic `.claim` renames, heartbeat refreshes, and verified stale lock reclamation.
+- [ ] Notes modified mid-sync are flagged as dirty and recalled through read-only in-memory overlay in subsequent searches.
+- [ ] Health v2 reports exact vector coverage via synchronous SQLite queries and separates current/history scope freshness.
 - [ ] Candidate-to-confirmed requires explicit user confirmation or an independent current authoritative Markdown source inside the candidate's bound project. AI output and global/other-project notes cannot confirm it.
 - [ ] Confirmed-to-current requires a verified Markdown write and reread/hash check. Replaced current facts become superseded atomically.
 - [ ] Audit events conform to `schemas/audit-event.schema.json` and contain no raw query, snippet, note body, candidate content, secret, or absolute path.

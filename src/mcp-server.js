@@ -92,6 +92,24 @@ export function createSecondBrainMcpServer() {
     createdBy: 'external-agent',
   })));
 
+  server.registerTool('second_brain_sync', {
+    title: 'Synchronize derived index',
+    description: 'Incrementally synchronize derived keyword and semantic indexes for a project or all current collections. Safe and bounded.',
+    inputSchema: {
+      project: z.string().min(1).max(200).optional(),
+      time: z.enum(['current', 'history', 'all']).default('current'),
+      semantic: z.enum(['auto', 'always', 'never']).default('auto'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, async ({ project, time, semantic }) => toolResult(await (async () => {
+    const { syncVault } = await import('./qmd-adapter.js');
+    return syncVault(runtime(), {
+      projectName: project,
+      temporalIntent: time,
+      semanticMode: semantic,
+    });
+  })()));
+
   return server;
 }
 

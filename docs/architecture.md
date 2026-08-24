@@ -21,6 +21,9 @@ explicit human/source confirmation
         |
         v
 existing safe Markdown write workflow
+        |
+        v
+scoped incremental sync (sbrain sync / second_brain_sync)
 ```
 
 The index and candidate queue are disposable. Deleting them never deletes or changes the vault.
@@ -30,11 +33,20 @@ The index and candidate queue are disposable. Deleting them never deletes or cha
 1. Discover projects from `02-项目/*/项目主页.md` (all directory names come from `src/structure.js` and can be overridden per installation via the `structure` section of `config/config.json`).
 2. Resolve an explicit project name or a unique positive identity match.
 3. For project-scoped search, include only the explicit global-governance allowlist (`AGENTS.md`, user profile, cooperation rules), global workflows, and the resolved project collection. Full long-term memory is available only to global search. A contradiction between the explicit scope and another project named in the query abstains before retrieval.
-4. Run BM25 and, when healthy, vector retrieval separately.
-5. Deduplicate vector chunks by source, then fuse lexical and semantic ranks with RRF. Authority and temporal state are returned as metadata, not disguised as similarity.
-6. Check the broader opened candidate set for material conflicts before truncating the response to four primary items. Expand at most two same-project Wiki links from selected evidence.
-7. Open source files to locate the cited line range. Numeric claims must occur in opened evidence; explicit disputes or inconsistent current authoritative values for the same fact trigger a conflict.
-8. Emit `grounded`, `insufficient`, or `conflict` with an audit trace identifier.
+4. If unindexed dirty files exist within the search scope, run an in-memory lexical overlay and exclude stale vectors corresponding to those dirty file paths.
+5. Run BM25 and, when healthy, vector retrieval separately.
+6. Deduplicate vector chunks by source, then fuse lexical, overlay, and semantic ranks with RRF. Authority and temporal state are returned as metadata, not disguised as similarity.
+7. Check the broader opened candidate set for material conflicts before truncating the response to four primary items. Expand at most two same-project Wiki links from selected evidence.
+8. Open source files to locate the cited line range. Numeric claims must occur in opened evidence; explicit disputes or inconsistent current authoritative values for the same fact trigger a conflict.
+9. Emit `grounded`, `insufficient`, or `conflict` with an audit trace identifier.
+
+## Incremental synchronization & scoped freshness
+
+- **Scoped Freshness**: Track metadata per file with collection and temporal tags (`current` vs `history`). Modifying a history log (e.g. `04-对话纪要/2026-08.md`) only marks the history scope as pending, keeping current project searches 100% fresh.
+- **In-Memory Overlay**: Search remains 100% read-only. Unsynced dirty notes in scope are scored in memory and recalled immediately without requiring disk or database writes.
+- **Stable Chunking & Vector Reuse**: Chunks use deterministic content-hash IDs (`relativePath + chunkTextHash + occurrenceIndex`). Modifying adjacent sections or line numbers reuses existing vectors with zero re-embedding cost.
+- **Dynamic 10s Budget**: Automatic semantic sync caps execution at 10 seconds, storing completed batches and marking remaining chunks as pending.
+- **Concurrency & Locks**: Sync uses a non-blocking generation lock file outside the vault with heartbeat tracking.
 
 ## Temporal and authority policy
 

@@ -88,14 +88,20 @@ export function collectSemanticChunks(vault, collections) {
     const text = readFileSync(file, 'utf8');
     const sourceHash = createHash('sha256').update(text).digest('hex');
     const relativePath = relative(vault, file).split(sep).join('/');
+    const textOccurrences = new Map();
     for (const [index, chunk] of chunkMarkdown(text).entries()) {
+      const chunkTextHash = createHash('sha256').update(chunk.text).digest('hex');
+      const occ = textOccurrences.get(chunkTextHash) || 0;
+      textOccurrences.set(chunkTextHash, occ + 1);
+      const id = createHash('sha256').update(`${relativePath}\0${chunkTextHash}\0${occ}`).digest('hex');
       records.push({
-        id: createHash('sha256').update(`${relativePath}\0${sourceHash}\0${index}`).digest('hex'),
+        id,
         sourcePath: file,
         relativePath,
         title: basename(file, '.md'),
         collections: memberships,
         sourceHash,
+        chunkTextHash,
         chunkIndex: index,
         startLine: chunk.startLine,
         endLine: chunk.endLine,

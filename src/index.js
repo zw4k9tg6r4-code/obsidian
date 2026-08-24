@@ -3,7 +3,7 @@ export { DEFAULT_STRUCTURE, resolveStructure } from './structure.js';
 export { assertSafeVaultTree, discoverProjects, resolveProjectScope, collectionsForScope } from './vault.js';
 export { fuseRankedLists } from './rrf.js';
 export { authorityForPath, decideEvidence, openEvidence } from './evidence.js';
-export { indexVault, publicHealth, readHealth, withStore } from './qmd-adapter.js';
+export { indexVault, syncVault, publicHealth, readHealth, withStore } from './qmd-adapter.js';
 export { searchSecondBrain } from './retrieval.js';
 export { createSecondBrainMcpServer, runStdioServer } from './mcp-server.js';
 export { VERSION } from './version.js';

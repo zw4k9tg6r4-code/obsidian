@@ -36,6 +36,7 @@ test('MCP exposes bounded read tools and candidate-only write', async (t) => {
     'second_brain_health',
     'second_brain_projects',
     'second_brain_search',
+    'second_brain_sync',
   ]);
 
   const search = await client.callTool({
@@ -50,6 +51,14 @@ test('MCP exposes bounded read tools and candidate-only write', async (t) => {
   assert.equal(searchJson.decision, 'grounded');
   assert.equal(searchJson.scope.project.directory, undefined);
   assert.ok(!JSON.stringify(searchJson).includes(vault));
+
+  const syncCall = await client.callTool({
+    name: 'second_brain_sync',
+    arguments: { project: '北辰仓配项目', time: 'current', semantic: 'never' },
+  });
+  const syncJson = JSON.parse(syncCall.content[0].text);
+  assert.equal(syncJson.ok, true);
+  assert.ok(Array.isArray(syncJson.syncedCollections));
 
   const candidate = await client.callTool({
     name: 'second_brain_candidate_add',

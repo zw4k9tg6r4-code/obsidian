@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/codex-obsidian-second-brain/health-v2.schema.json",
+  "title": "Second Brain Health v2 Schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "indexed",
+    "current",
+    "history",
+    "overall",
+    "indexFresh",
+    "semanticHealthy",
+    "vectorCoverage",
+    "degraded"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "indexed": { "type": "boolean" },
+    "current": { "$ref": "#/$defs/scopeHealth" },
+    "history": { "$ref": "#/$defs/scopeHealth" },
+    "overall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allFresh", "syncInProgress"],
+      "properties": {
+        "allFresh": { "type": "boolean" },
+        "syncInProgress": { "type": "boolean" }
+      }
+    },
+    "indexFresh": { "type": "boolean" },
+    "semanticHealthy": { "type": "boolean" },
+    "vectorCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
+    "degraded": { "type": "boolean" },
+    "reason": { "type": ["string", "null"] },
+    "qmdVersion": { "type": ["string", "null"] },
+    "indexedAt": { "type": ["string", "null"] },
+    "semanticModel": { "type": ["string", "null"] },
+    "status": { "type": "object" },
+    "health": { "type": "object" },
+    "metadata": { "type": ["object", "null"] },
+    "semanticMetadata": { "type": ["object", "null"] },
+    "dirtyFiles": { "type": "array" },
+    "collections": { "type": "array" },
+    "projects": { "type": "array" }
+  },
+  "$defs": {
+    "scopeHealth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lexicalFresh",
+        "semanticHealthy",
+        "vectorCoverage",
+        "pendingFiles",
+        "pendingChunks",
+        "degraded"
+      ],
+      "properties": {
+        "lexicalFresh": { "type": "boolean" },
+        "semanticHealthy": { "type": "boolean" },
+        "vectorCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "pendingFiles": { "type": "integer", "minimum": 0 },
+        "pendingChunks": { "type": "integer", "minimum": 0 },
+        "degraded": { "type": "boolean" },
+        "reason": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

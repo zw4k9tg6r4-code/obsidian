@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolveRuntimeConfig, assertSourcePath, toVaultRelative } from './config.js';
 import { discoverProjects } from './vault.js';
-import { indexVault, publicHealth, readHealth, QMD_VERSION } from './qmd-adapter.js';
+import { indexVault, syncVault, publicHealth, readHealth, QMD_VERSION } from './qmd-adapter.js';
 import { searchSecondBrain } from './retrieval.js';
 import { activateCandidate, addCandidate, confirmCandidate, listCandidates, markCandidate } from './candidates.js';
 import { VERSION } from './version.js';
@@ -69,6 +69,7 @@ function help() {
 
 Usage:
   sbrain index [--vault PATH] [--semantic]
+  sbrain sync [--project NAME] [--time current|history|all] [--semantic auto|always|never]
   sbrain search --query TEXT [--project NAME] [--time current|history] [--max-evidence 4] [--max-related 2] [--lexical-only]
   sbrain health [--vault PATH]
   sbrain projects [--vault PATH]
@@ -96,6 +97,27 @@ async function main() {
   if (command === 'index') {
     const config = resolveRuntimeConfig(runtimeOptions(flags));
     result = await indexVault(config, { semantic: flags.semantic === true });
+  } else if (command === 'sync') {
+    const timeVal = option(flags, 'time');
+    if (timeVal && !['current', 'history', 'all'].includes(timeVal)) {
+      throw new Error(`Invalid --time option: ${timeVal}. Expected current, history, or all.`);
+    }
+    const semVal = option(flags, 'semantic');
+    if (semVal && !['auto', 'always', 'never'].includes(semVal)) {
+      throw new Error(`Invalid --semantic option: ${semVal}. Expected auto, always, or never.`);
+    }
+    const budgetRaw = option(flags, 'budget');
+    const budgetMs = budgetRaw !== undefined ? Number(budgetRaw) : 10000;
+    if (Number.isNaN(budgetMs) || budgetMs < 0) {
+      throw new Error(`Invalid --budget option: ${budgetRaw}. Must be a non-negative number.`);
+    }
+    const config = resolveRuntimeConfig(runtimeOptions(flags));
+    result = await syncVault(config, {
+      projectName: option(flags, 'project'),
+      temporalIntent: timeVal || 'current',
+      semanticMode: semVal || 'auto',
+      budgetMs,
+    });
   } else if (command === 'search') {
     result = await searchSecondBrain({
       ...runtimeOptions(flags),

@@ -1,8 +1,9 @@
 import { performance } from 'node:perf_hooks';
-import { existsSync } from 'node:fs';
-import { resolveRuntimeConfig } from './config.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
+import { resolveRuntimeConfig, toVaultRelative } from './config.js';
 import { assertSafeVaultTree, discoverProjects, resolveProjectScope, collectionsForScope } from './vault.js';
-import { readHealth, lexicalSearch, vectorSearch, withStore } from './qmd-adapter.js';
+import { readHealth, lexicalSearch, vectorSearch, withStore, lexicalVariants } from './qmd-adapter.js';
 import { fuseRankedLists } from './rrf.js';
 import {
   decideEvidence,
@@ -30,6 +31,57 @@ function boundedCount(value, fallback, minimum, maximum) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) throw new Error(`Invalid numeric option: ${String(value)}`);
   return Math.max(minimum, Math.min(Math.trunc(parsed), maximum));
+}
+
+function runInMemoryOverlay(dirtyFilesInScope, query) {
+  const overlayResults = [];
+  const variants = lexicalVariants(query);
+  for (const d of dirtyFilesInScope) {
+    if (d.status === 'deleted') continue;
+    let text = d.text;
+    if (!text && d.fullPath && existsSync(d.fullPath)) {
+      try { text = readFileSync(d.fullPath, 'utf8'); } catch {}
+    }
+    if (!text) continue;
+    const lines = text.split(/\r?\n/);
+    let bestScore = 0;
+    let bestLine = 1;
+    for (const variant of variants) {
+      const term = variant.query.toLowerCase();
+      lines.forEach((line, idx) => {
+        if (line.toLowerCase().includes(term)) {
+          bestScore += (term.length * variant.weight);
+          if (bestScore > 0 && bestLine === 1) bestLine = idx + 1;
+        }
+      });
+    }
+    const threshold = variants.length > 1 ? 2.5 : 1.0;
+    if (bestScore >= threshold) {
+      overlayResults.push({
+        filepath: d.fullPath,
+        displayPath: d.path,
+        title: basename(d.path, '.md'),
+        score: bestScore,
+        lineStartHint: bestLine,
+        source: 'overlay',
+      });
+    }
+  }
+  overlayResults.sort((a, b) => b.score - a.score);
+  return overlayResults;
+}
+
+function safeVaultRelative(vaultRoot, filePath) {
+  if (!filePath) return null;
+  try {
+    const normalizedVault = resolve(vaultRoot).split('\\').join('/');
+    const normalizedFile = resolve(filePath).split('\\').join('/');
+    if (normalizedFile === normalizedVault) return '';
+    if (normalizedFile.startsWith(normalizedVault + '/')) {
+      return normalizedFile.slice(normalizedVault.length + 1);
+    }
+  } catch {}
+  return null;
 }
 
 export async function searchSecondBrain(options) {
@@ -133,14 +185,67 @@ export async function searchSecondBrain(options) {
     return result;
   }
   const { health, lists } = outcome;
-  let semanticFailure = null;
-  if (health.semanticHealthy && options.lexicalOnly !== true) {
-    const semantic = await vectorSearch(config, query, collectionNames, Number(options.candidateLimit || 20));
-    if (semantic.ok) lists.push(...semantic.lists);
-    else semanticFailure = redactLocalPaths(semantic.reason, config.vault, config.dataDir);
+
+  // Filter dirty files that belong specifically to the current search scope's collections
+  const dirtyFilesInScope = (health.dirtyFiles || []).filter((d) => d.collections.some((c) => collectionNames.includes(c)));
+  const scopeLexicalFresh = dirtyFilesInScope.length === 0;
+  const dirtyVaultPaths = new Set(dirtyFilesInScope.map((d) => d.path.split('\\').join('/')));
+
+  // Filter out any dirty paths from QMD lexical lists so stale lexical results don't pollute RRF
+  const cleanLexicalLists = lists.map((l) => ({
+    ...l,
+    results: l.results.filter((r) => {
+      const relPath = (r.displayPath || '').split('\\').join('/');
+      const vaultRel = safeVaultRelative(config.vault, r.filepath);
+      const isFileDeleted = r.filepath ? !existsSync(r.filepath) : false;
+      const isDirty = isFileDeleted
+        || dirtyVaultPaths.has(relPath)
+        || (vaultRel && dirtyVaultPaths.has(vaultRel))
+        || dirtyFilesInScope.some((d) => relPath.endsWith(d.path) || d.path.endsWith(relPath));
+      return !isDirty;
+    }),
+  }));
+  const allLists = [...cleanLexicalLists];
+
+  // Run in-memory overlay for unindexed dirty files in scope
+  if (dirtyFilesInScope.length > 0) {
+    const overlayResults = runInMemoryOverlay(dirtyFilesInScope, query);
+    if (overlayResults.length > 0) {
+      allLists.push({
+        source: 'overlay',
+        collection: 'overlay-scope',
+        weight: 1.3,
+        results: overlayResults,
+      });
+    }
   }
 
-  const fused = fuseRankedLists(lists);
+  let semanticFailure = null;
+  if (health.semanticHealthy && options.lexicalOnly !== true) {
+    const semantic = await vectorSearch(config, query, collectionNames, Number(options.candidateLimit || 20), {
+      excludePaths: [...dirtyVaultPaths],
+    });
+    if (semantic.ok) {
+      const filteredVectorLists = semantic.lists.map((l) => ({
+        ...l,
+        results: l.results.filter((r) => {
+          const relPath = (r.displayPath || '').split('\\').join('/');
+          const vaultRel = safeVaultRelative(config.vault, r.filepath);
+          const isFileDeleted = r.filepath ? !existsSync(r.filepath) : false;
+          const isDirty = isFileDeleted
+            || dirtyVaultPaths.has(relPath)
+            || (vaultRel && dirtyVaultPaths.has(vaultRel))
+            || dirtyFilesInScope.some((d) => relPath.endsWith(d.path) || d.path.endsWith(relPath));
+          return !isDirty;
+        }),
+      }));
+      allLists.push(...filteredVectorLists);
+    } else {
+      semanticFailure = redactLocalPaths(semantic.reason, config.vault, config.dataDir);
+    }
+  }
+
+  const fused = fuseRankedLists(allLists);
   const opened = [];
   const sourceErrors = [...searchErrors];
   for (const result of fused) {
@@ -160,7 +265,8 @@ export async function searchSecondBrain(options) {
     structure: config.structure,
     max: boundedCount(options.maxRelated, 2, 0, 2),
   });
-  const indexFresh = health.indexFresh === true;
+
+  const indexFresh = scopeLexicalFresh;
   const assessmentEvidence = [...filtered, ...relatedEvidence];
   const broaderAssessmentEvidence = [...temporalEvidence, ...relatedEvidence];
   const broaderAssessment = decideEvidence({
@@ -173,9 +279,20 @@ export async function searchSecondBrain(options) {
   const assessment = broaderAssessment.decision === 'conflict'
     ? broaderAssessment
     : decideEvidence({ query, evidence: assessmentEvidence, scope, indexFresh, temporalIntent });
-  const degraded = Boolean(health.degraded || semanticFailure || sourceErrors.length);
+
+  const semanticDegraded = !options.lexicalOnly && !health.semanticHealthy;
+  const degraded = Boolean(
+    !scopeLexicalFresh ||
+    semanticFailure ||
+    sourceErrors.length ||
+    semanticDegraded ||
+    (health.degraded && !options.lexicalOnly)
+  );
   const degradedReason = semanticFailure
-    || (sourceErrors.length ? `${sourceErrors.length} source result(s) rejected` : health.reason);
+    || (sourceErrors.length ? `${sourceErrors.length} source result(s) rejected` : null)
+    || (!scopeLexicalFresh ? `${dirtyFilesInScope.length} unindexed file(s) in scope` : null)
+    || (semanticDegraded ? (health.reason || 'local semantic index is missing or stale') : null)
+    || (health.degraded && !options.lexicalOnly ? health.reason : null);
   const conflictEvidencePaths = new Set(assessment.conflictEvidencePaths || []);
   const result = {
     schemaVersion: 1,
