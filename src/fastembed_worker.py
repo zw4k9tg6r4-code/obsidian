@@ -2,11 +2,11 @@ import json
 import os
 import sqlite3
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
 from fastembed import TextEmbedding
-
 
 MODEL = "BAAI/bge-small-zh-v1.5"
 
@@ -24,24 +24,35 @@ def model_for(request):
 def initialize(db_path):
     connection = sqlite3.connect(db_path)
     connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS chunks (
-          id TEXT PRIMARY KEY,
-          source_path TEXT NOT NULL,
-          relative_path TEXT NOT NULL,
-          title TEXT NOT NULL,
-          collections TEXT NOT NULL,
-          source_hash TEXT NOT NULL,
-          chunk_index INTEGER NOT NULL,
-          start_line INTEGER NOT NULL,
-          end_line INTEGER NOT NULL,
-          dimensions INTEGER NOT NULL,
-          embedding BLOB NOT NULL
+
+    # Check if existing table needs migration to include chunk_text_hash
+    table_info = connection.execute("PRAGMA table_info(chunks)").fetchall()
+    if table_info:
+        column_names = {row[1] for row in table_info}
+        if "chunk_text_hash" not in column_names:
+            connection.execute("ALTER TABLE chunks ADD COLUMN chunk_text_hash TEXT DEFAULT ''")
+    else:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chunks (
+              id TEXT PRIMARY KEY,
+              source_path TEXT NOT NULL,
+              relative_path TEXT NOT NULL,
+              title TEXT NOT NULL,
+              collections TEXT NOT NULL,
+              source_hash TEXT NOT NULL,
+              chunk_text_hash TEXT NOT NULL,
+              chunk_index INTEGER NOT NULL,
+              start_line INTEGER NOT NULL,
+              end_line INTEGER NOT NULL,
+              dimensions INTEGER NOT NULL,
+              embedding BLOB NOT NULL
+            )
+            """
         )
-        """
-    )
     connection.execute("CREATE INDEX IF NOT EXISTS idx_chunks_relative ON chunks(relative_path)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_chunks_source_hash ON chunks(source_hash)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_chunks_text_hash ON chunks(chunk_text_hash)")
     return connection
 
 
@@ -57,37 +68,135 @@ def embed_query(model, query):
     return list(model.embed([query]))[0]
 
 
-def index(request):
+def sync(request):
     records = request["records"]
-    model = model_for(request)
-    vectors = embed_documents(model, [record["text"] for record in records])
+    budget_ms = float(request.get("budgetMs", 10000))
+    mode = request.get("mode", "auto")
+    synced_collections = set(request.get("syncedCollections", []))
+
+    connection = initialize(request["dbPath"])
+    try:
+        existing_rows = connection.execute(
+            "SELECT id, chunk_text_hash, source_hash, relative_path, dimensions FROM chunks"
+        ).fetchall()
+        existing_map = {row[0]: row for row in existing_rows}
+
+        needed_embed = []
+        reused = []
+        for rec in records:
+            if rec["id"] in existing_map:
+                reused.append(rec)
+            else:
+                needed_embed.append(rec)
+
+        embedded_records = []
+        pending_records = []
+        vectors = []
+        dim = existing_rows[0][4] if existing_rows else 0
+
+        if mode == "never":
+            pending_records = needed_embed
+        else:
+            model = None
+            start_time = time.perf_counter()
+            batch_size = 16
+
+            for i in range(0, len(needed_embed), batch_size):
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                if mode == "auto" and i > 0 and elapsed_ms >= budget_ms:
+                    pending_records.extend(needed_embed[i:])
+                    break
+
+                batch = needed_embed[i : i + batch_size]
+                if model is None:
+                    model = model_for(request)
+                batch_vectors = embed_documents(model, [r["text"] for r in batch])
+                if batch_vectors and dim == 0:
+                    dim = int(batch_vectors[0].shape[0])
+                for r, v in zip(batch, batch_vectors):
+                    embedded_records.append((r, v))
+
+        # Commit SQLite transaction
+        with connection:
+            # 1. Insert newly embedded records
+            for r, v in embedded_records:
+                array = np.asarray(v, dtype=np.float32)
+                connection.execute(
+                    """INSERT OR REPLACE INTO chunks
+                    (id, source_path, relative_path, title, collections, source_hash,
+                     chunk_text_hash, chunk_index, start_line, end_line, dimensions, embedding)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        r["id"], r["sourcePath"], r["relativePath"],
+                        r["title"], json.dumps(r["collections"], ensure_ascii=False),
+                        r["sourceHash"], r.get("chunkTextHash", ""), r["chunkIndex"],
+                        r["startLine"], r["endLine"], int(array.shape[0]), array.tobytes(),
+                    ),
+                )
+
+            # 2. Update reused records' metadata (lines, collections, hashes)
+            for r in reused:
+                connection.execute(
+                    """UPDATE chunks SET
+                    source_path = ?, relative_path = ?, title = ?, collections = ?,
+                    source_hash = ?, chunk_index = ?, start_line = ?, end_line = ?
+                    WHERE id = ?""",
+                    (
+                        r["sourcePath"], r["relativePath"], r["title"],
+                        json.dumps(r["collections"], ensure_ascii=False),
+                        r["sourceHash"], r["chunkIndex"], r["startLine"],
+                        r["endLine"], r["id"],
+                    ),
+                )
+
+            # 3. Delete obsolete chunks for the synced files
+            all_target_paths = {r["relativePath"] for r in records}
+            active_ids = {r["id"] for r in records}
+            if all_target_paths:
+                placeholders = ",".join("?" for _ in all_target_paths)
+                existing_for_paths = connection.execute(
+                    f"SELECT id, relative_path FROM chunks WHERE relative_path IN ({placeholders})",
+                    list(all_target_paths),
+                ).fetchall()
+                for cid, rel in existing_for_paths:
+                    if cid not in active_ids:
+                        connection.execute("DELETE FROM chunks WHERE id = ?", (cid,))
+
+    finally:
+        connection.close()
+
+    return {
+        "ok": True,
+        "model": MODEL,
+        "embedded": len(embedded_records),
+        "reused": len(reused),
+        "pending": len(pending_records),
+        "totalChunks": len(records),
+        "dimensions": dim,
+    }
+
+
+def index(request):
+    # Full index delegates to sync with mode=always
+    req = dict(request)
+    req["mode"] = "always"
+    req["budgetMs"] = 1000000
     connection = initialize(request["dbPath"])
     try:
         with connection:
             connection.execute("DELETE FROM chunks")
-            for record, vector in zip(records, vectors):
-                array = np.asarray(vector, dtype=np.float32)
-                connection.execute(
-                    """INSERT INTO chunks
-                    (id, source_path, relative_path, title, collections, source_hash,
-                     chunk_index, start_line, end_line, dimensions, embedding)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        record["id"], record["sourcePath"], record["relativePath"],
-                        record["title"], json.dumps(record["collections"], ensure_ascii=False),
-                        record["sourceHash"], record["chunkIndex"], record["startLine"],
-                        record["endLine"], int(array.shape[0]), array.tobytes(),
-                    ),
-                )
     finally:
         connection.close()
-    return {"ok": True, "model": MODEL, "chunks": len(records), "dimensions": int(vectors[0].shape[0]) if vectors else 0}
+    return sync(req)
 
 
 def search(request):
     model = model_for(request)
     query_vector = np.asarray(embed_query(model, request["query"]), dtype=np.float32)
     allowed = set(request["collectionNames"])
+    valid_source_hashes = set(request.get("validSourceHashes", []))
+    exclude_paths = set(request.get("excludePaths", []))
+
     connection = sqlite3.connect(request["dbPath"])
     try:
         rows = connection.execute(
@@ -98,9 +207,16 @@ def search(request):
 
     scored = []
     for row in rows:
+        rel_path = row[1]
+        if rel_path in exclude_paths:
+            continue
         memberships = set(json.loads(row[3]))
         if not memberships.intersection(allowed):
             continue
+        source_hash = row[4]
+        if valid_source_hashes and source_hash not in valid_source_hashes:
+            continue
+
         vector = np.frombuffer(row[9], dtype=np.float32, count=row[8])
         denominator = float(np.linalg.norm(query_vector) * np.linalg.norm(vector))
         score = float(np.dot(query_vector, vector) / denominator) if denominator else 0.0
@@ -123,6 +239,8 @@ def main():
     request = read_request()
     if request["action"] == "index":
         response = index(request)
+    elif request["action"] == "sync":
+        response = sync(request)
     elif request["action"] == "search":
         response = search(request)
     elif request["action"] == "probe":
@@ -140,4 +258,3 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
         raise
-

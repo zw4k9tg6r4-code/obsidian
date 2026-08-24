@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,24 +62,62 @@ export async function indexSemantic(config, collections, vaultFingerprint) {
   const result = await runPython(config, { action: 'index', records }, { timeoutMs: 30 * 60 * 1000 });
   if (result.ok) {
     writeJsonAtomic(config.semanticMetadataPath, {
-      schemaVersion: 1,
+      schemaVersion: 2,
       model: SEMANTIC_MODEL,
       fastembedVersion: FASTEMBED_VERSION,
       indexedAt: new Date().toISOString(),
       vaultFingerprint,
       sourceFiles: new Set(records.map((item) => item.relativePath)).size,
       chunks: records.length,
+      embedded: result.embedded ?? records.length,
+      reused: result.reused ?? 0,
+      pending: result.pending ?? 0,
       dimensions: result.dimensions,
     });
   }
   return result;
 }
 
-export async function searchSemantic(config, query, collectionNames, limit = 20) {
+export async function syncSemantic(config, collections, targetCollectionNames, { mode = 'auto', budgetMs = 10000 } = {}) {
+  const records = collectSemanticChunks(config.vault, collections);
+  const targetRecords = records.filter((r) => r.collections.some((c) => targetCollectionNames.includes(c)));
+  const result = await runPython(config, {
+    action: 'sync',
+    records: targetRecords,
+    syncedCollections: targetCollectionNames,
+    mode,
+    budgetMs,
+  }, { timeoutMs: Math.max(budgetMs * 2, 30000) });
+
+  if (result.ok) {
+    let prevMeta = null;
+    if (existsSync(config.semanticMetadataPath)) {
+      try { prevMeta = JSON.parse(readFileSync(config.semanticMetadataPath, 'utf8')); } catch {}
+    }
+    const metadata = {
+      schemaVersion: 2,
+      model: SEMANTIC_MODEL,
+      fastembedVersion: FASTEMBED_VERSION,
+      indexedAt: new Date().toISOString(),
+      sourceFiles: new Set(targetRecords.map((item) => item.relativePath)).size,
+      chunks: targetRecords.length,
+      embedded: result.embedded ?? 0,
+      reused: result.reused ?? 0,
+      pending: result.pending ?? 0,
+      dimensions: result.dimensions || prevMeta?.dimensions || 0,
+    };
+    writeJsonAtomic(config.semanticMetadataPath, metadata);
+  }
+  return result;
+}
+
+export async function searchSemantic(config, query, collectionNames, limit = 20, { excludePaths = [], validSourceHashes = [] } = {}) {
   const result = await runPython(config, {
     action: 'search',
     query,
     collectionNames,
+    excludePaths,
+    validSourceHashes,
     limit: Math.min(Math.max(limit * 4, limit), 100),
   }, { timeoutMs: 90 * 1000 });
   if (!result.ok) return result;
