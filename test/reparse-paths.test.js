@@ -24,6 +24,13 @@ const powershell = process.platform === 'win32'
   ? join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
   : null;
 const windowsOnly = { skip: process.platform !== 'win32' };
+const fullReleaseRootOnly = {
+  skip: process.platform !== 'win32'
+    ? 'requires Windows PowerShell'
+    : !existsSync(join(repository, 'AGENTS.md'))
+      ? 'requires the full release source root'
+      : false,
+};
 
 function runScript(script, args, timeout = 30_000) {
   return spawnSync(powershell, [
@@ -103,7 +110,7 @@ test('normal non-reparse release output remains supported', windowsOnly, () => {
   }
 });
 
-test('build-release resolves its repository source root when SourceRoot is omitted', windowsOnly, () => {
+test('build-release resolves its repository source root when SourceRoot is omitted', fullReleaseRootOnly, () => {
   const root = mkdtempSync(join(tmpdir(), 'sbrain-release-default-source-'));
   try {
     const output = join(root, 'output');
