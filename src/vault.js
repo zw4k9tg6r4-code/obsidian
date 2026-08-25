@@ -52,10 +52,11 @@ export function stableProjectId(name, portableIdentity) {
 }
 
 export function discoverProjects(vault, structure = DEFAULT_STRUCTURE) {
-  const projectsRootCandidate = join(vault, structure.projectsDir);
+  const canonicalVault = realpathSync.native(vault);
+  const projectsRootCandidate = join(canonicalVault, structure.projectsDir);
   if (!existsSync(projectsRootCandidate) || lstatSync(projectsRootCandidate).isSymbolicLink()) return [];
   const projectsRoot = realpathSync.native(projectsRootCandidate);
-  if (!isPathInside(vault, projectsRoot)) return [];
+  if (!isPathInside(canonicalVault, projectsRoot)) return [];
 
   const projects = [];
   for (const entry of readdirSync(projectsRoot, { withFileTypes: true })) {
@@ -63,7 +64,7 @@ export function discoverProjects(vault, structure = DEFAULT_STRUCTURE) {
     const directoryCandidate = join(projectsRoot, entry.name);
     if (lstatSync(directoryCandidate).isSymbolicLink()) continue;
     const directory = realpathSync.native(directoryCandidate);
-    if (!isPathInside(vault, directory)) continue;
+    if (!isPathInside(canonicalVault, directory)) continue;
     const homePath = join(directory, structure.projectHome);
     if (!existsSync(homePath) || lstatSync(homePath).isSymbolicLink()) continue;
     const { body, frontmatter } = parseMarkdown(homePath);
@@ -156,17 +157,18 @@ function collection(name, path, pattern = '**/*.md', ignore = []) {
 }
 
 export function buildCollections(vault, projects, structure = DEFAULT_STRUCTURE) {
+  const canonicalVault = realpathSync.native(vault);
   const safeCollectionPath = (candidate) => {
     if (!existsSync(candidate) || lstatSync(candidate).isSymbolicLink()) return null;
     const real = realpathSync.native(candidate);
-    return isPathInside(vault, real) ? real : null;
+    return isPathInside(canonicalVault, real) ? real : null;
   };
   const collections = [
-    collection('global-root', vault, braceGlob(structure.homeNotes)),
-    collection('global-governance', vault, braceGlob(structure.governanceFiles)),
-    collection('global-memory', safeCollectionPath(join(vault, structure.memoryDir))),
-    collection('global-workflows', safeCollectionPath(join(vault, structure.workflowDir))),
-    collection('global-history', safeCollectionPath(join(vault, structure.conversationDir))),
+    collection('global-root', canonicalVault, braceGlob(structure.homeNotes)),
+    collection('global-governance', canonicalVault, braceGlob(structure.governanceFiles)),
+    collection('global-memory', safeCollectionPath(join(canonicalVault, structure.memoryDir))),
+    collection('global-workflows', safeCollectionPath(join(canonicalVault, structure.workflowDir))),
+    collection('global-history', safeCollectionPath(join(canonicalVault, structure.conversationDir))),
   ].filter((item) => item.path && existsSync(item.path));
 
   for (const project of projects) {

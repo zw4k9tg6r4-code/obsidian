@@ -110,7 +110,7 @@ export function collectSemanticChunks(vault, collections) {
     ...collection,
     path: realpathSync.native(collection.path),
   }));
-  const files = walkMarkdown(vault, canonicalVault);
+  const files = walkMarkdown(canonicalVault, canonicalVault);
   const records = [];
   for (const file of files) {
     const memberships = canonicalCollections.filter((collection) => inCollection(file.real, collection)).map((collection) => collection.name);
@@ -121,7 +121,7 @@ export function collectSemanticChunks(vault, collections) {
     // 8.3 alias for a temporary directory while traversal returns the long
     // path; mixing those representations can exclude every file or produce a
     // prefixed relative path.
-    const relativePath = relative(vault, file.logical).split(sep).join('/');
+    const relativePath = relative(canonicalVault, file.logical).split(sep).join('/');
     const textOccurrences = new Map();
     for (const [index, chunk] of chunkMarkdown(text).entries()) {
       const chunkTextHash = createHash('sha256').update(chunk.text).digest('hex');
