@@ -6,13 +6,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -317,8 +318,8 @@ test('semantic initialization forwards consent and falls back to the installed C
     const dataDirIndex = result.argv.indexOf('--data-dir');
     assert.notEqual(dataDirIndex, -1);
     assert.equal(
-      resolve(result.argv[dataDirIndex + 1]).toLowerCase(),
-      resolve(dataDir).toLowerCase(),
+      realpathSync.native(result.argv[dataDirIndex + 1]).toLowerCase(),
+      realpathSync.native(dataDir).toLowerCase(),
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
