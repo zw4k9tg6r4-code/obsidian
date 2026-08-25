@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$DataDir = (Join-Path $env:LOCALAPPDATA 'CodexSecondBrain'),
-    [switch]$AcceptNetwork
+    [switch]$AcceptNetwork,
+    [switch]$ProbeOnly
 )
 
 Set-StrictMode -Version Latest
@@ -51,7 +52,7 @@ $projectRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $DataDir = [System.IO.Path]::GetFullPath($DataDir)
 [void](Assert-NoReparseTraversal -Path $DataDir -Label 'semantic data directory')
 Assert-NotInsideObsidianVault -Path $DataDir
-if (-not $AcceptNetwork) {
+if (-not $AcceptNetwork -and -not $ProbeOnly) {
     throw 'Semantic setup downloads pinned Python packages. Re-run with -AcceptNetwork after reviewing requirements-semantic.txt.'
 }
 
@@ -61,8 +62,6 @@ $venvDir = Join-Path $runtimeDir '.venv'
 $venvPython = Join-Path $venvDir 'Scripts\python.exe'
 [void](Assert-NoReparseTraversal -Path $runtimeDir -Label 'semantic runtime directory')
 [void](Assert-NoReparseTraversal -Path $venvDir -Label 'semantic virtual environment')
-New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
-[void](Assert-NoReparseTraversal -Path $runtimeDir -Label 'created semantic runtime directory')
 
 function Find-GenuinePythonRuntime {
     $uv = Get-Command uv -ErrorAction SilentlyContinue
@@ -88,12 +87,18 @@ function Find-GenuinePythonRuntime {
 
     foreach ($cand in $candidates) {
         try {
-            $probeScript = 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")'
-            $callArgs = @() + $cand.Args + @('-c', $probeScript)
-            $out = & $cand.Cmd @callArgs 2>$null
-            if ($LASTEXITCODE -eq 0 -and $out) {
-                $parts = $out.Trim().Split('.')
-                if ($parts.Length -ge 2 -and [int]$parts[0] -eq 3 -and [int]$parts[1] -ge 10) {
+            # Use --version instead of inline Python. Windows PowerShell 5.1 can
+            # strip nested quotes from native -c arguments and corrupt probes.
+            $callArgs = @() + $cand.Args + @('--version')
+            $out = @(& $cand.Cmd @callArgs 2>&1)
+            if ($LASTEXITCODE -eq 0 -and $out.Count -gt 0) {
+                $versionText = (@($out | ForEach-Object { [string]$_ }) -join ' ').Trim()
+                $match = [regex]::Match($versionText, 'Python\s+(\d+)\.(\d+)')
+                if ($match.Success) {
+                    $major = [int]$match.Groups[1].Value
+                    $minor = [int]$match.Groups[2].Value
+                }
+                if ($match.Success -and $major -eq 3 -and $minor -ge 10 -and $minor -le 12) {
                     return @{
                         Engine = 'python'
                         Executable = $cand.Cmd
@@ -108,6 +113,17 @@ function Find-GenuinePythonRuntime {
 }
 
 $runtime = Find-GenuinePythonRuntime
+if ($ProbeOnly) {
+    [ordered]@{
+        ok = $true
+        engine = $runtime.Engine
+    } | ConvertTo-Json
+    return
+}
+
+New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+[void](Assert-NoReparseTraversal -Path $runtimeDir -Label 'created semantic runtime directory')
+
 if ($runtime.Engine -eq 'uv') {
     if (-not (Test-Path -LiteralPath $venvPython)) {
         & $runtime.Executable venv --python 3.12 $venvDir

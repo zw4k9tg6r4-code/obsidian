@@ -43,6 +43,8 @@ For a human-guided setup, double-click `INSTALL.cmd`. It installs the Codex Skil
 
 Installation backs up the existing Codex/Antigravity Skill, installs pinned dependencies, and writes only local configuration outside the vault. It does not index the vault or download a model. Those are separate explicit steps. Use `scripts/rollback.ps1` with the emitted manifest to restore the previous installation.
 
+`initialize-index.ps1 -Semantic -AcceptModelDownload` performs a separately authorized one-time model download, verifies that the pinned model can be loaded offline, and only then builds the semantic index. Ordinary indexing, synchronization, search, and MCP workers remain offline-only.
+
 The one-click wizard composes those explicit steps only after the user confirms its summary. Its default is Codex-only plus lexical indexing; semantic setup remains separately consented.
 
 By default, derived data is stored under `%LOCALAPPDATA%\CodexSecondBrain`. Override it with `SECOND_BRAIN_DATA_DIR`.

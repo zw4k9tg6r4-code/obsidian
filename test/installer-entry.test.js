@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   symlinkSync,
@@ -18,6 +19,9 @@ import { fileURLToPath } from 'node:url';
 
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const wizard = join(repository, 'scripts', 'install-wizard.ps1');
+const initializeIndex = join(repository, 'scripts', 'initialize-index.ps1');
+const setupSemantic = join(repository, 'scripts', 'setup-semantic.ps1');
+const downloadSemanticModel = join(repository, 'scripts', 'download-semantic-model.ps1');
 const powershell = process.platform === 'win32'
   ? join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
   : null;
@@ -38,6 +42,24 @@ function outputOf(run) {
   return `${run.stdout || ''}\n${run.stderr || ''}`;
 }
 
+function findPythonExecutable() {
+  const probes = process.platform === 'win32'
+    ? [
+        ['py.exe', ['-3.12']],
+        ['py.exe', ['-3']],
+        ['python.exe', []],
+      ]
+    : [
+        ['python3', []],
+        ['python', []],
+      ];
+  for (const [command, prefix] of probes) {
+    const run = spawnSync(command, [...prefix, '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+    if (run.status === 0 && run.stdout.trim()) return run.stdout.trim();
+  }
+  return null;
+}
+
 function makeVault(root) {
   const vault = join(root, 'synthetic-vault');
   mkdirSync(vault, { recursive: true });
@@ -49,7 +71,11 @@ test('self-guided entrypoints are present and route only to the fixed wizard', (
   const agents = readFileSync(join(repository, 'AGENTS.md'), 'utf8');
   const start = readFileSync(join(repository, 'START-HERE.md'), 'utf8');
   const launcher = readFileSync(join(repository, 'INSTALL.cmd'), 'utf8');
-  const initialize = readFileSync(join(repository, 'scripts', 'initialize-index.ps1'), 'utf8');
+  const initialize = readFileSync(initializeIndex, 'utf8');
+  const semanticSetup = readFileSync(setupSemantic, 'utf8');
+  const semanticDownload = readFileSync(downloadSemanticModel, 'utf8');
+  const semanticDownloader = readFileSync(join(repository, 'src', 'download_semantic_model.py'), 'utf8');
+  const semanticWorker = readFileSync(join(repository, 'src', 'fastembed_worker.py'), 'utf8');
   const install = readFileSync(join(repository, 'scripts', 'install.ps1'), 'utf8');
   const wizardSource = readFileSync(wizard, 'utf8');
 
@@ -62,15 +88,32 @@ test('self-guided entrypoints are present and route only to the fixed wizard', (
   assert.match(launcher, /exit \/b %INSTALL_EXIT%/i);
   assert.doesNotMatch(launcher, /%\*/);
   assert.doesNotMatch(launcher, /Invoke-Expression|iex/i);
-  assert.match(initialize, /Join-Path \$projectRoot 'src\\cli\.js'/);
+  assert.match(initialize, /download-semantic-model\.ps1/);
+  assert.match(initialize, /\$installedCli/);
+  assert.match(initialize, /Get-Command node/);
+  assert.match(initialize, /& \$node\.Source @arguments/);
+  assert.match(semanticSetup, /@\('--version'\)/);
+  assert.doesNotMatch(semanticSetup, /probeScript|sys\.version_info/);
+  assert.match(semanticDownload, /if \(-not \$AcceptModelDownload\)/);
+  assert.match(semanticDownloader, /local_files_only=False/);
+  assert.match(semanticDownloader, /local_files_only=True/);
+  assert.match(semanticWorker, /local_files_only=True/);
   assert.match(install, /Assert-NoContainment \$projectRoot \$installRootFull/);
   assert.match(wizardSource, /installer package and InstallRoot must not contain one another/);
 });
 
 test('PowerShell installer entrypoints parse cleanly', windowsOnly, () => {
+  const entrypoints = [
+    wizard,
+    join(repository, 'scripts', 'install.ps1'),
+    initializeIndex,
+    setupSemantic,
+    downloadSemanticModel,
+  ];
+  const quotedEntrypoints = entrypoints.map((file) => `'${file.replaceAll("'", "''")}'`).join(', ');
   const command = [
     "$errors = @()",
-    `foreach ($file in @('${wizard.replaceAll("'", "''")}', '${join(repository, 'scripts', 'install.ps1').replaceAll("'", "''")}')) {`,
+    `foreach ($file in @(${quotedEntrypoints})) {`,
     '  $tokens = $null; $parseErrors = $null',
     '  [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$parseErrors) | Out-Null',
     '  $errors += $parseErrors',
@@ -81,6 +124,206 @@ test('PowerShell installer entrypoints parse cleanly', windowsOnly, () => {
     encoding: 'utf8',
   });
   assert.equal(run.status, 0, outputOf(run));
+});
+
+test('semantic model downloader requires explicit consent before writes', windowsOnly, () => {
+  const root = mkdtempSync(join(tmpdir(), 'sbrain-model-consent-'));
+  try {
+    const dataDir = join(root, 'local-data');
+    const run = spawnSync(powershell, [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', downloadSemanticModel,
+      '-DataDir', dataDir,
+    ], { encoding: 'utf8', timeout: 30_000 });
+    assert.notEqual(run.status, 0, outputOf(run));
+    assert.match(outputOf(run), /AcceptModelDownload/i);
+    assert.equal(existsSync(dataDir), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Windows PowerShell 5.1 probes a standard Python without writing semantic state', windowsOnly, () => {
+  const root = mkdtempSync(join(tmpdir(), 'sbrain-python-probe-'));
+  try {
+    const dataDir = join(root, 'local-data');
+    const run = spawnSync(powershell, [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', setupSemantic,
+      '-DataDir', dataDir,
+      '-ProbeOnly',
+    ], {
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        Path: [process.env.SystemRoot, join(process.env.SystemRoot, 'System32')].join(';'),
+      },
+    });
+    assert.equal(run.status, 0, outputOf(run));
+    const result = JSON.parse(run.stdout);
+    assert.equal(result.ok, true);
+    assert.equal(result.engine, 'python');
+    assert.equal(existsSync(dataDir), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('authorized downloader goes online once and then verifies the same model offline', windowsOnly, (t) => {
+  const python = findPythonExecutable();
+  if (!python) return t.skip('standard Python is not available');
+  const root = mkdtempSync(join(tmpdir(), 'sbrain-model-download-behavior-'));
+  try {
+    const fakeRoot = join(root, 'fake-python');
+    const fakePackage = join(fakeRoot, 'fastembed');
+    const dataDir = join(root, 'local-data');
+    const marker = join(root, 'fastembed-calls.jsonl');
+    mkdirSync(fakePackage, { recursive: true });
+    writeFileSync(join(fakePackage, '__init__.py'), [
+      'import json',
+      'import os',
+      '',
+      'class TextEmbedding:',
+      '    def __init__(self, **kwargs):',
+      '        record = {',
+      '            "localFilesOnly": kwargs.get("local_files_only"),',
+      '            "hfOffline": os.environ.get("HF_HUB_OFFLINE"),',
+      '            "transformersOffline": os.environ.get("TRANSFORMERS_OFFLINE"),',
+      '        }',
+      '        with open(os.environ["FAKE_FASTEMBED_MARKER"], "a", encoding="utf-8") as handle:',
+      '            handle.write(json.dumps(record) + "\\n")',
+      '    def embed(self, texts, batch_size=1):',
+      '        yield [0.0] * 512',
+    ].join('\n'), 'utf8');
+
+    const run = spawnSync(powershell, [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', downloadSemanticModel,
+      '-DataDir', dataDir,
+      '-AcceptModelDownload',
+    ], {
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        SECOND_BRAIN_PYTHON: python,
+        PYTHONPATH: fakeRoot,
+        FAKE_FASTEMBED_MARKER: marker,
+        HF_HUB_OFFLINE: '1',
+        TRANSFORMERS_OFFLINE: '1',
+      },
+    });
+
+    assert.equal(run.status, 0, outputOf(run));
+    const calls = readFileSync(marker, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    assert.deepEqual(calls, [
+      { localFilesOnly: false, hfOffline: null, transformersOffline: null },
+      { localFilesOnly: true, hfOffline: null, transformersOffline: null },
+    ]);
+    const result = JSON.parse(run.stdout.trim().split(/\r?\n/).at(-1));
+    assert.equal(result.ok, true);
+    assert.equal(result.dimensions, 512);
+    assert.equal(result.offlineVerified, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('semantic initialization validates a runnable CLI before model download', windowsOnly, () => {
+  const root = mkdtempSync(join(tmpdir(), 'sbrain-semantic-preflight-'));
+  try {
+    const packageRoot = join(root, 'package');
+    const scripts = join(packageRoot, 'scripts');
+    const vault = makeVault(root);
+    const dataDir = join(root, 'local-data');
+    const marker = join(root, 'download-called.txt');
+    mkdirSync(scripts, { recursive: true });
+    copyFileSync(initializeIndex, join(scripts, 'initialize-index.ps1'));
+    writeFileSync(join(scripts, 'download-semantic-model.ps1'), [
+      'param([string]$DataDir, [switch]$AcceptModelDownload)',
+      `Set-Content -LiteralPath '${marker.replaceAll("'", "''")}' -Value 'unexpected'`,
+    ].join('\n'), 'utf8');
+
+    const run = spawnSync(powershell, [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', join(scripts, 'initialize-index.ps1'),
+      '-VaultPath', vault,
+      '-DataDir', dataDir,
+      '-Semantic',
+      '-AcceptModelDownload',
+    ], { encoding: 'utf8', timeout: 30_000 });
+
+    assert.notEqual(run.status, 0, outputOf(run));
+    assert.match(outputOf(run), /No runnable Second Brain CLI/i);
+    assert.equal(existsSync(marker), false);
+    assert.equal(existsSync(dataDir), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('semantic initialization forwards consent and falls back to the installed CLI', windowsOnly, () => {
+  const root = mkdtempSync(join(tmpdir(), 'sbrain-semantic-installed-cli-'));
+  try {
+    const packageRoot = join(root, 'package');
+    const scripts = join(packageRoot, 'scripts');
+    const vault = makeVault(root);
+    const dataDir = join(root, 'local-data');
+    const installedApp = join(dataDir, 'app');
+    const marker = join(root, 'download-called.txt');
+    mkdirSync(scripts, { recursive: true });
+    mkdirSync(join(installedApp, 'src'), { recursive: true });
+    mkdirSync(join(installedApp, 'node_modules', 'yaml'), { recursive: true });
+    mkdirSync(join(installedApp, 'node_modules', '@tobilu', 'qmd'), { recursive: true });
+    copyFileSync(initializeIndex, join(scripts, 'initialize-index.ps1'));
+    writeFileSync(join(scripts, 'download-semantic-model.ps1'), [
+      'param([string]$DataDir, [switch]$AcceptModelDownload)',
+      "if (-not $AcceptModelDownload) { throw 'consent missing' }",
+      `Set-Content -LiteralPath '${marker.replaceAll("'", "''")}' -Value 'accepted'`,
+    ].join('\n'), 'utf8');
+    writeFileSync(join(installedApp, 'src', 'cli.js'), "console.log(JSON.stringify({ source: 'installed', argv: process.argv.slice(2) }));\n", 'utf8');
+    writeFileSync(join(installedApp, 'node_modules', 'yaml', 'package.json'), '{}\n', 'utf8');
+    writeFileSync(join(installedApp, 'node_modules', '@tobilu', 'qmd', 'package.json'), '{}\n', 'utf8');
+
+    const run = spawnSync(powershell, [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', join(scripts, 'initialize-index.ps1'),
+      '-VaultPath', vault,
+      '-DataDir', dataDir,
+      '-Semantic',
+      '-AcceptModelDownload',
+    ], { encoding: 'utf8', timeout: 30_000 });
+
+    assert.equal(run.status, 0, outputOf(run));
+    assert.equal(readFileSync(marker, 'utf8').trim(), 'accepted');
+    const result = JSON.parse(run.stdout.trim().split(/\r?\n/).at(-1));
+    assert.equal(result.source, 'installed');
+    assert.ok(result.argv.includes('--semantic'));
+    const dataDirIndex = result.argv.indexOf('--data-dir');
+    assert.notEqual(dataDirIndex, -1);
+    assert.equal(
+      realpathSync.native(result.argv[dataDirIndex + 1]).toLowerCase(),
+      realpathSync.native(dataDir).toLowerCase(),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('PlanOnly validates a synthetic Vault and performs zero writes', windowsOnly, () => {

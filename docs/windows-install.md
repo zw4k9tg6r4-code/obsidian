@@ -28,6 +28,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\initialize-index.ps1 `
 
 `-ExecutionPolicy Bypass` applies only to that process; the scripts never change machine or user execution policy.
 
+Semantic initialization keeps the normal worker offline. When `-AcceptModelDownload` is present, a dedicated one-time downloader fetches the pinned model into the derived-data directory, creates a 512-dimensional test embedding, reloads the model with local-files-only mode, and then starts semantic indexing. Without that explicit switch, no model download is attempted.
+
 The installer emits an `install-manifest.json` path. New manifests are bound to one install batch and include the exact backup directory/file inventory, byte lengths, and SHA-256 hashes. Rollback validates the complete manifest, rejects duplicate Skill entries and any reparse/junction traversal, and verifies every recorded backup before moving any current file. Restore the previous app, configuration, and Skill copies with:
 
 ```powershell

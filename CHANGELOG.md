@@ -18,6 +18,9 @@
 - **History Scope Alignment**: Aligned history synchronization collections to include current project notes and global governance rules.
 
 ### Fixed
+- Fixed semantic initialization so explicit `-AcceptModelDownload` consent invokes a dedicated model downloader, verifies offline loading, and then indexes while ordinary workers remain offline-only.
+- Fixed Python runtime detection under Windows PowerShell 5.1 by using `python --version` instead of a quote-sensitive inline probe.
+- Fixed manual index initialization from a dependency-free source package by falling back to the installed app CLI.
 - Fixed unhandled exception when searching after physical note deletion.
 - Fixed atomic lock reclamation race condition by verifying claimed lock identity before unlinking.
 - Fixed atomic transaction rollback in semantic worker so index failures preserve existing chunks.
