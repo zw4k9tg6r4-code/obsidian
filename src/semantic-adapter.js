@@ -352,13 +352,6 @@ export async function indexSemantic(config, collections, vaultFingerprint) {
 }
 
 export async function syncSemantic(config, collections, targetCollectionNames, { mode = 'auto', budgetMs = 10000 } = {}) {
-  if (!isSemanticRuntimeConfigured(config)) {
-    if (mode === 'auto') {
-      return { ok: true, skipped: true, reason: 'semantic runtime or model not configured' };
-    }
-    return { ok: false, reason: 'semantic runtime or model not configured. Run scripts/setup-semantic.ps1 first.' };
-  }
-
   const records = collectSemanticChunks(config.vault, collections);
   const targetRecords = records.filter((r) => r.collections.some((c) => targetCollectionNames.includes(c)));
 
@@ -373,6 +366,13 @@ export async function syncSemantic(config, collections, targetCollectionNames, {
       skipped: false,
       reason: 'embedding skipped due to zero or near-zero budget in auto mode',
     };
+  }
+
+  if (!isSemanticRuntimeConfigured(config)) {
+    if (mode === 'auto') {
+      return { ok: true, skipped: true, reason: 'semantic runtime or model not configured' };
+    }
+    return { ok: false, reason: 'semantic runtime or model not configured. Run scripts/setup-semantic.ps1 first.' };
   }
 
   const result = await runPython(config, {

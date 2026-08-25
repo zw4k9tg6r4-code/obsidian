@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { resolveRuntimeConfig } from '../src/config.js';
 import { indexVault, syncVault, readHealth } from '../src/qmd-adapter.js';
 import { searchSecondBrain } from '../src/retrieval.js';
-import { indexSemantic, syncSemantic } from '../src/semantic-adapter.js';
+import { indexSemantic, isSemanticRuntimeConfigured, syncSemantic } from '../src/semantic-adapter.js';
 import { buildCollections, discoverProjects } from '../src/vault.js';
 import { acquireSyncLock, lockPath } from '../src/lock.js';
 
@@ -118,8 +118,11 @@ test('P1-3 probe: empty semantic database reports semanticHealthy=false and vect
   assert.equal(health.current.vectorCoverage, 0, 'Empty database coverage must be 0');
 });
 
-test('P1-4 probe: deleted files are cleaned from semantic sqlite chunks', async () => {
+test('P1-4 probe: deleted files are cleaned from semantic sqlite chunks', async (t) => {
   const { vault, config } = createSyntheticEnv();
+  if (!isSemanticRuntimeConfigured(config)) {
+    return t.skip('optional semantic runtime and local model are not configured');
+  }
   const tempFile = join(vault, '02-项目', '北辰仓配项目', '01-输入', '临时删除件.md');
   writeFileSync(tempFile, '# 临时件\n临时计费每件99元。\n', 'utf8');
 
@@ -144,8 +147,11 @@ test('P1-4 probe: deleted files are cleaned from semantic sqlite chunks', async 
   assert.equal(rows.length, 0, 'Deleted file chunks must be removed from sqlite');
 });
 
-test('P1-5 probe: failed semantic indexing preserves existing usable chunks and does not wipe database', async () => {
+test('P1-5 probe: failed semantic indexing preserves existing usable chunks and does not wipe database', async (t) => {
   const { vault, config } = createSyntheticEnv();
+  if (!isSemanticRuntimeConfigured(config)) {
+    return t.skip('optional semantic runtime and local model are not configured');
+  }
   const projects = discoverProjects(vault, config.structure);
   const collections = buildCollections(vault, projects, config.structure);
 
@@ -158,12 +164,14 @@ test('P1-5 probe: failed semantic indexing preserves existing usable chunks and 
   assert.ok(initialRows > 0);
 
   // Now attempt indexing with invalid environment / failure
+  const previousPython = process.env.SECOND_BRAIN_PYTHON;
   process.env.SECOND_BRAIN_PYTHON = 'invalid_python_exe_fail_probe';
   try {
     const failRes = await indexSemantic(config, collections, {});
     assert.equal(failRes.ok, false);
   } finally {
-    delete process.env.SECOND_BRAIN_PYTHON;
+    if (previousPython === undefined) delete process.env.SECOND_BRAIN_PYTHON;
+    else process.env.SECOND_BRAIN_PYTHON = previousPython;
   }
 
   // Verify database rows were NOT deleted

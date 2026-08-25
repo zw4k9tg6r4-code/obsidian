@@ -14,7 +14,7 @@ function walkMarkdown(root, vault, output = []) {
     if (entry.isDirectory()) walkMarkdown(full, vault, output);
     else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
       const real = realpathSync.native(full);
-      if (isPathInside(vault, real)) output.push(real);
+      if (isPathInside(vault, real)) output.push({ logical: full, real });
     }
   }
   return output;
@@ -105,14 +105,23 @@ export function chunkMarkdown(text, { maxChars = 2400, overlapLines = 2 } = {}) 
 }
 
 export function collectSemanticChunks(vault, collections) {
-  const files = walkMarkdown(vault, vault);
+  const canonicalVault = realpathSync.native(vault);
+  const canonicalCollections = collections.map((collection) => ({
+    ...collection,
+    path: realpathSync.native(collection.path),
+  }));
+  const files = walkMarkdown(vault, canonicalVault);
   const records = [];
   for (const file of files) {
-    const memberships = collections.filter((collection) => inCollection(file, collection)).map((collection) => collection.name);
+    const memberships = canonicalCollections.filter((collection) => inCollection(file.real, collection)).map((collection) => collection.name);
     if (memberships.length === 0) continue;
-    const text = readFileSync(file, 'utf8');
+    const text = readFileSync(file.real, 'utf8');
     const sourceHash = createHash('sha256').update(text).digest('hex');
-    const relativePath = relative(vault, file).split(sep).join('/');
+    // Preserve the logical, user-visible path. On Windows, realpath can use an
+    // 8.3 alias for a temporary directory while traversal returns the long
+    // path; mixing those representations can exclude every file or produce a
+    // prefixed relative path.
+    const relativePath = relative(vault, file.logical).split(sep).join('/');
     const textOccurrences = new Map();
     for (const [index, chunk] of chunkMarkdown(text).entries()) {
       const chunkTextHash = createHash('sha256').update(chunk.text).digest('hex');
@@ -121,9 +130,9 @@ export function collectSemanticChunks(vault, collections) {
       const id = createHash('sha256').update(`${relativePath}\0${chunkTextHash}\0${occ}`).digest('hex');
       records.push({
         id,
-        sourcePath: file,
+        sourcePath: file.real,
         relativePath,
-        title: basename(file, '.md'),
+        title: basename(file.logical, '.md'),
         collections: memberships,
         sourceHash,
         chunkTextHash,

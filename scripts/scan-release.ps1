@@ -186,18 +186,23 @@ function Read-DirectoryEntries {
     $runningTotal = [int64]0
     $entryCount = 0
     $limitReached = $false
-    $pending = New-Object System.Collections.Generic.Stack[string]
-    $pending.Push($root)
+    $pending = New-Object System.Collections.Stack
+    $pending.Push([pscustomobject]@{ FullPath = $root; RelativePath = '' })
     while ($pending.Count -gt 0 -and -not $limitReached) {
         $current = $pending.Pop()
-        foreach ($item in Get-ChildItem -LiteralPath $current -Force) {
-            $relative = $item.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/')
+        foreach ($item in Get-ChildItem -LiteralPath $current.FullPath -Force) {
+            $relative = if ($current.RelativePath) {
+                "$($current.RelativePath)/$($item.Name)"
+            }
+            else {
+                [string]$item.Name
+            }
             if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
                 Add-Finding -Rule 'reparse-point' -RelativePath $relative
                 continue
             }
             if ($item.PSIsContainer) {
-                $pending.Push($item.FullName)
+                $pending.Push([pscustomobject]@{ FullPath = $item.FullName; RelativePath = $relative })
                 continue
             }
             $entryCount += 1

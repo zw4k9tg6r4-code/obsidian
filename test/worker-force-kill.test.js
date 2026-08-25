@@ -78,10 +78,10 @@ test('P2-07: force-kill branch is actually reached and verified by PID disappear
     });
   });
 
-  // POSIX: the fixture itself ignores SIGTERM. Windows: the proxy no-ops kill().
-  const trackedChild = process.platform === 'win32'
-    ? makeUnkillableChildProxy(realWorker)
-    : realWorker;
+  // No-op the graceful signal on every platform so the test deterministically
+  // reaches the delayed force-kill path. A real PID is still used and its OS-
+  // level disappearance is verified below.
+  const trackedChild = makeUnkillableChildProxy(realWorker);
   registerActiveWorker(trackedChild);
   assert.ok(getActiveWorkersCount() >= 1, 'Stubborn worker must be tracked');
 
