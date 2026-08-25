@@ -1,4 +1,5 @@
 const DEFAULT_K = 60;
+const EPSILON = 1e-9;
 
 function resultKey(result) {
   return result.filepath || result.displayPath || result.hash;
@@ -6,13 +7,16 @@ function resultKey(result) {
 
 export function fuseRankedLists(lists, { k = DEFAULT_K } = {}) {
   const fused = new Map();
+  const safeK = Number.isFinite(k) && k > 0 ? k : DEFAULT_K;
+
   for (const list of lists) {
     const listWeight = Number(list.weight ?? 1);
-    list.results.forEach((result, index) => {
+    if (!Number.isFinite(listWeight) || listWeight <= 0) continue;
+    (list.results || []).forEach((result, index) => {
       const key = resultKey(result);
       if (!key) return;
       const rank = index + 1;
-      const contribution = listWeight / (k + rank);
+      const contribution = listWeight / (safeK + rank);
       const existing = fused.get(key) || {
         ...result,
         rrfScore: 0,
@@ -42,9 +46,10 @@ export function fuseRankedLists(lists, { k = DEFAULT_K } = {}) {
   }
 
   return [...fused.values()].sort((a, b) => {
-    if (b.rrfScore !== a.rrfScore) return b.rrfScore - a.rrfScore;
+    if (Math.abs(b.rrfScore - a.rrfScore) > EPSILON) return b.rrfScore - a.rrfScore;
     const aBest = Math.min(a.lexicalRank ?? Infinity, a.vectorRank ?? Infinity);
     const bBest = Math.min(b.lexicalRank ?? Infinity, b.vectorRank ?? Infinity);
-    return aBest - bBest;
+    if (aBest !== bBest) return aBest - bBest;
+    return (a.filepath || a.displayPath || a.hash || '').localeCompare(b.filepath || b.displayPath || b.hash || '');
   });
 }

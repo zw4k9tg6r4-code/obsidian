@@ -56,36 +56,51 @@ export async function withStore(config, fn) {
   }
 }
 
+const EXTENDED_STOP_WORDS = new Set([
+  '什么', '怎么', '如何', '是否', '多少', '目前', '现在', '当前', '一下', '这个', '那个', '存在',
+  '请问', '查询', '关于', '对于', '为什么', '怎样', '可以', '能够', '需要', '帮忙', '有没有',
+  '哪个', '哪些', '哪里', '这是', '那是', '因为', '所以', '并且', '以及',
+  'what', 'how', 'when', 'where', 'which', 'who', 'why', 'is', 'are', 'was', 'were',
+  'the', 'a', 'an', 'in', 'on', 'at', 'for', 'to', 'of', 'with', 'about', 'please'
+]);
+
+const PROTECTED_SINGLE_CJK = new Set(['吨', '箱', '板', '车', '仓', '费', '日', '月', '年', '折', '钱']);
+
 function materializeResults(results, collectionName, collections) {
   const definition = collections.find((item) => item.name === collectionName);
   if (!definition) return [];
   return results.map((result) => {
+    const normalizedDisplay = String(result.displayPath || '').replaceAll('\\', '/');
     const prefix = `${collectionName}/`;
-    const relativePath = result.displayPath?.startsWith(prefix)
-      ? result.displayPath.slice(prefix.length)
-      : result.displayPath;
+    const relativePath = normalizedDisplay.startsWith(prefix)
+      ? normalizedDisplay.slice(prefix.length)
+      : normalizedDisplay;
     return {
       ...result,
       qmdUri: result.filepath,
-      filepath: join(definition.path, ...String(relativePath || '').split('/')),
+      filepath: join(definition.path, ...relativePath.split('/')),
     };
   });
 }
 
 export function lexicalVariants(query) {
   const variants = [{ query, weight: 1.2, label: 'original' }];
-  const stop = new Set(['什么', '怎么', '如何', '是否', '多少', '目前', '现在', '当前', '一下', '这个', '那个', '存在']);
   const terms = [];
+  const normalized = String(query).normalize('NFKC');
   try {
     const segmenter = new Intl.Segmenter('zh-CN', { granularity: 'word' });
-    for (const item of segmenter.segment(String(query).normalize('NFKC'))) {
-      const term = item.segment.trim();
-      if (item.isWordLike && term.length >= 2 && !stop.has(term)) terms.push(term);
+    for (const item of segmenter.segment(normalized)) {
+      const term = item.segment.trim().toLowerCase();
+      if (item.isWordLike && !EXTENDED_STOP_WORDS.has(term)) {
+        if (term.length >= 2 || PROTECTED_SINGLE_CJK.has(term)) {
+          terms.push(term);
+        }
+      }
     }
   } catch {
-    terms.push(...String(query).split(/[^\p{L}\p{N}.]+/gu).filter((term) => term.length >= 2 && !stop.has(term)));
+    terms.push(...normalized.split(/[^\p{L}\p{N}.]+/gu).filter((term) => (term.length >= 2 || PROTECTED_SINGLE_CJK.has(term)) && !EXTENDED_STOP_WORDS.has(term)));
   }
-  for (const number of String(query).match(/\d+(?:\.\d+)?/g) || []) terms.push(number);
+  for (const number of normalized.match(/\d+(?:\.\d+)?/g) || []) terms.push(number);
   const unique = [...new Set(terms)].slice(0, 12);
   if (unique.length > 1) unique.slice(0, 8).forEach((term, index) => {
     variants.push({ query: term, weight: 0.65, label: `term-${index + 1}` });
@@ -282,6 +297,7 @@ export async function syncVault(config, {
       semanticRequested: semanticMode !== 'never',
       semanticReady: semanticOk,
       semanticReason: semanticOk ? null : (semanticResult.reason || null),
+      checkpointStatus: semanticResult.checkpoint || null,
     };
     writeJsonAtomic(config.metadataPath, newMetadata);
 
@@ -329,16 +345,21 @@ async function collectHealth(config, store) {
   const { calculateSemanticHealth } = await import('./semantic-adapter.js');
   const semanticHealth = calculateSemanticHealth(config, collections);
   const isSemanticConfigured = semanticHealth.available && semanticMetadata?.model === SEMANTIC_MODEL;
-  const currentSemanticHealthy = Boolean(isSemanticConfigured && currentLexicalFresh && semanticHealth.currentPending === 0);
+  const checkpointStatus = metadata?.checkpointStatus || null;
+  const checkpointDegraded = Boolean(checkpointStatus?.busy || checkpointStatus?.error);
+
+  const currentSemanticHealthy = Boolean(isSemanticConfigured && currentLexicalFresh && semanticHealth.currentPending === 0 && !checkpointDegraded);
   const historySemanticHealthy = Boolean(isSemanticConfigured && historyLexicalFresh && semanticHealth.historyPending === 0);
 
   const currentVectorCoverage = isSemanticConfigured ? semanticHealth.currentCoverage : 0;
   const historyVectorCoverage = isSemanticConfigured ? semanticHealth.historyCoverage : 0;
 
-  const currentDegraded = !currentLexicalFresh || !currentSemanticHealthy || (currentVectorCoverage < 1);
+  const currentDegraded = !currentLexicalFresh || !currentSemanticHealthy || (currentVectorCoverage < 1) || checkpointDegraded;
   const currentReason = !currentLexicalFresh
     ? 'vault changed after the last successful index update'
-    : (currentSemanticHealthy ? null : 'local semantic index is missing or stale');
+    : (checkpointDegraded
+        ? 'sqlite wal checkpoint is busy or degraded'
+        : (currentSemanticHealthy ? null : 'local semantic index is missing or stale'));
 
   const historyReason = !historyLexicalFresh
     ? 'history semantic updates are pending on demand'

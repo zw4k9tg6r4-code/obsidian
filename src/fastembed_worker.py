@@ -24,9 +24,26 @@ def model_for(request):
     return TextEmbedding(model_name=MODEL, cache_dir=str(cache_dir), threads=4, local_files_only=True)
 
 
+def safe_checkpoint(connection, mode="TRUNCATE"):
+    try:
+        row = connection.execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
+        if row:
+            return {"busy": bool(row[0]), "log": int(row[1]), "checkpointed": int(row[2])}
+        return {"busy": False, "log": 0, "checkpointed": 0}
+    except Exception as exc:
+        return {"busy": True, "error": str(exc)}
+
+
 def initialize(db_path):
-    connection = sqlite3.connect(db_path)
+    connection = sqlite3.connect(db_path, timeout=30.0)
     connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    connection.execute("PRAGMA busy_timeout = 30000")
+    connection.execute("PRAGMA wal_autocheckpoint = 1000")
+    try:
+        connection.execute("PRAGMA mmap_size = 268435456")
+    except Exception:
+        pass
 
     table_info = connection.execute("PRAGMA table_info(chunks)").fetchall()
     if table_info:
@@ -79,15 +96,26 @@ def sync(request):
     connection = initialize(request["dbPath"])
     try:
         existing_rows = connection.execute(
-            "SELECT id, chunk_text_hash, source_hash, relative_path, dimensions FROM chunks"
+            "SELECT id, chunk_text_hash, source_hash, relative_path, dimensions, embedding FROM chunks"
         ).fetchall()
         existing_map = {row[0]: row for row in existing_rows}
 
+        # Build text hash cache to reuse embeddings on renamed files or moved chunks
+        cached_by_text_hash = {}
+        for row in existing_rows:
+            th = row[1]
+            if th and th not in cached_by_text_hash:
+                cached_by_text_hash[th] = (row[4], row[5])  # (dim, blob)
+
         needed_embed = []
         reused = []
+        reused_by_hash = []
         for rec in records:
             if rec["id"] in existing_map:
                 reused.append(rec)
+            elif rec.get("chunkTextHash") and rec["chunkTextHash"] in cached_by_text_hash:
+                dim_cached, blob_cached = cached_by_text_hash[rec["chunkTextHash"]]
+                reused_by_hash.append((rec, dim_cached, blob_cached))
             else:
                 needed_embed.append(rec)
 
@@ -136,40 +164,67 @@ def sync(request):
                         embedded_records.append((r, v))
                     cursor += len(batch)
 
-        # Commit SQLite transaction atomically
+        # Commit SQLite transaction atomically with executemany
         with connection:
             # 1. Insert newly embedded records
-            for r, v in embedded_records:
-                array = np.asarray(v, dtype=np.float32)
-                connection.execute(
-                    """INSERT OR REPLACE INTO chunks
-                    (id, source_path, relative_path, title, collections, source_hash,
-                     chunk_text_hash, chunk_index, start_line, end_line, dimensions, embedding)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            if embedded_records:
+                insert_payload = [
                     (
                         r["id"], r["sourcePath"], r["relativePath"],
                         r["title"], json.dumps(r["collections"], ensure_ascii=False),
                         r["sourceHash"], r.get("chunkTextHash", ""), r["chunkIndex"],
-                        r["startLine"], r["endLine"], int(array.shape[0]), array.tobytes(),
-                    ),
+                        r["startLine"], r["endLine"], int(np.asarray(v, dtype=np.float32).shape[0]),
+                        np.asarray(v, dtype=np.float32).tobytes(),
+                    )
+                    for r, v in embedded_records
+                ]
+                connection.executemany(
+                    """INSERT OR REPLACE INTO chunks
+                    (id, source_path, relative_path, title, collections, source_hash,
+                     chunk_text_hash, chunk_index, start_line, end_line, dimensions, embedding)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    insert_payload,
                 )
 
-            # 2. Update reused records' metadata (lines, collections, hashes)
-            for r in reused:
-                connection.execute(
-                    """UPDATE chunks SET
-                    source_path = ?, relative_path = ?, title = ?, collections = ?,
-                    source_hash = ?, chunk_index = ?, start_line = ?, end_line = ?
-                    WHERE id = ?""",
+            # 2. Insert records reused via chunk_text_hash
+            if reused_by_hash:
+                hash_reuse_payload = [
+                    (
+                        r["id"], r["sourcePath"], r["relativePath"],
+                        r["title"], json.dumps(r["collections"], ensure_ascii=False),
+                        r["sourceHash"], r.get("chunkTextHash", ""), r["chunkIndex"],
+                        r["startLine"], r["endLine"], d, b,
+                    )
+                    for r, d, b in reused_by_hash
+                ]
+                connection.executemany(
+                    """INSERT OR REPLACE INTO chunks
+                    (id, source_path, relative_path, title, collections, source_hash,
+                     chunk_text_hash, chunk_index, start_line, end_line, dimensions, embedding)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    hash_reuse_payload,
+                )
+
+            # 3. Update exact reused records' metadata
+            if reused:
+                update_payload = [
                     (
                         r["sourcePath"], r["relativePath"], r["title"],
                         json.dumps(r["collections"], ensure_ascii=False),
                         r["sourceHash"], r["chunkIndex"], r["startLine"],
                         r["endLine"], r["id"],
-                    ),
+                    )
+                    for r in reused
+                ]
+                connection.executemany(
+                    """UPDATE chunks SET
+                    source_path = ?, relative_path = ?, title = ?, collections = ?,
+                    source_hash = ?, chunk_index = ?, start_line = ?, end_line = ?
+                    WHERE id = ?""",
+                    update_payload,
                 )
 
-            # 3. Clean up deleted files and collection migrations
+            # 4. Clean up deleted files and collection migrations
             active_ids = {r["id"] for r in records}
             records_by_id = {r["id"]: r for r in records}
             if synced_collections:
@@ -197,6 +252,9 @@ def sync(request):
                             else:
                                 connection.execute("DELETE FROM chunks WHERE id = ?", (cid,))
 
+        # Explicit checkpoint outside the commit block (no open transaction)
+        checkpoint_status = safe_checkpoint(connection, mode="TRUNCATE")
+
     finally:
         connection.close()
 
@@ -204,10 +262,11 @@ def sync(request):
         "ok": True,
         "model": MODEL,
         "embedded": len(embedded_records),
-        "reused": len(reused),
+        "reused": len(reused) + len(reused_by_hash),
         "pending": len(pending_records),
         "totalChunks": len(records),
         "dimensions": dim,
+        "checkpoint": checkpoint_status,
     }
 
 
@@ -221,19 +280,27 @@ def index(request):
 def search(request):
     model = model_for(request)
     query_vector = np.asarray(embed_query(model, request["query"]), dtype=np.float32)
+    query_norm = float(np.linalg.norm(query_vector))
+    query_normed = (query_vector / query_norm) if query_norm > 0 else query_vector
+
     allowed = set(request["collectionNames"])
     valid_source_hashes = set(request.get("validSourceHashes", []))
     exclude_paths = set(request.get("excludePaths", []))
 
-    connection = sqlite3.connect(request["dbPath"])
+    connection = sqlite3.connect(request["dbPath"], timeout=30.0)
     try:
+        connection.execute("PRAGMA busy_timeout = 30000")
         rows = connection.execute(
             "SELECT source_path, relative_path, title, collections, source_hash, chunk_index, start_line, end_line, dimensions, embedding FROM chunks"
         ).fetchall()
     finally:
         connection.close()
 
-    scored = []
+    if not rows:
+        return {"ok": True, "model": MODEL, "results": []}
+
+    candidate_rows = []
+    vector_list = []
     for row in rows:
         rel_path = row[1]
         if rel_path in exclude_paths:
@@ -246,8 +313,29 @@ def search(request):
             continue
 
         vector = np.frombuffer(row[9], dtype=np.float32, count=row[8])
-        denominator = float(np.linalg.norm(query_vector) * np.linalg.norm(vector))
-        score = float(np.dot(query_vector, vector) / denominator) if denominator else 0.0
+        vector_list.append(vector)
+        candidate_rows.append(row)
+
+    if not candidate_rows:
+        return {"ok": True, "model": MODEL, "results": []}
+
+    # Vectorized cosine similarity computation via GEMV
+    matrix = np.vstack(vector_list)
+    matrix_norms = np.linalg.norm(matrix, axis=1)
+    matrix_norms[matrix_norms == 0] = 1.0
+    normed_matrix = matrix / matrix_norms[:, np.newaxis]
+    scores = np.dot(normed_matrix, query_normed)
+
+    limit = int(request.get("limit", 20))
+    if len(scores) > limit:
+        top_indices = np.argpartition(scores, -limit)[-limit:]
+        top_indices = top_indices[np.argsort(-scores[top_indices])]
+    else:
+        top_indices = np.argsort(-scores)
+
+    scored = []
+    for idx in top_indices:
+        row = candidate_rows[idx]
         scored.append({
             "filepath": row[0],
             "displayPath": row[1],
@@ -256,11 +344,11 @@ def search(request):
             "chunkIndex": row[5],
             "lineStartHint": row[6],
             "lineEndHint": row[7],
-            "score": score,
+            "score": float(scores[idx]),
             "source": "vec",
         })
-    scored.sort(key=lambda item: item["score"], reverse=True)
-    return {"ok": True, "model": MODEL, "results": scored[: int(request.get("limit", 20))]}
+
+    return {"ok": True, "model": MODEL, "results": scored}
 
 
 def main():

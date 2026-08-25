@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { existsSync, readFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { resolveRuntimeConfig, toVaultRelative } from './config.js';
 import { assertSafeVaultTree, discoverProjects, resolveProjectScope, collectionsForScope } from './vault.js';
 import { readHealth, lexicalSearch, vectorSearch, withStore, lexicalVariants } from './qmd-adapter.js';
@@ -46,12 +46,16 @@ function runInMemoryOverlay(dirtyFilesInScope, query) {
     const lines = text.split(/\r?\n/);
     let bestScore = 0;
     let bestLine = 1;
+    let lineFound = false;
     for (const variant of variants) {
       const term = variant.query.toLowerCase();
       lines.forEach((line, idx) => {
         if (line.toLowerCase().includes(term)) {
           bestScore += (term.length * variant.weight);
-          if (bestScore > 0 && bestLine === 1) bestLine = idx + 1;
+          if (!lineFound) {
+            bestLine = idx + 1;
+            lineFound = true;
+          }
         }
       });
     }
@@ -74,11 +78,10 @@ function runInMemoryOverlay(dirtyFilesInScope, query) {
 function safeVaultRelative(vaultRoot, filePath) {
   if (!filePath) return null;
   try {
-    const normalizedVault = resolve(vaultRoot).split('\\').join('/');
-    const normalizedFile = resolve(filePath).split('\\').join('/');
-    if (normalizedFile === normalizedVault) return '';
-    if (normalizedFile.startsWith(normalizedVault + '/')) {
-      return normalizedFile.slice(normalizedVault.length + 1);
+    const rel = relative(resolve(vaultRoot), resolve(filePath));
+    if (rel === '') return '';
+    if (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel)) {
+      return rel.split(sep).join('/');
     }
   } catch {}
   return null;
@@ -201,7 +204,7 @@ export async function searchSecondBrain(options) {
       const isDirty = isFileDeleted
         || dirtyVaultPaths.has(relPath)
         || (vaultRel && dirtyVaultPaths.has(vaultRel))
-        || dirtyFilesInScope.some((d) => relPath.endsWith(d.path) || d.path.endsWith(relPath));
+        || dirtyFilesInScope.some((d) => relPath === d.path || relPath.endsWith('/' + d.path) || d.path.endsWith('/' + relPath));
       return !isDirty;
     }),
   }));
@@ -258,13 +261,14 @@ export async function searchSecondBrain(options) {
   }
   const temporalEvidence = filterTemporalEvidence(opened, temporalIntent);
   const filtered = temporalEvidence.slice(0, maxEvidence);
-  const relatedEvidence = expandLinkedEvidence(filtered, {
+  const expandedRelatedEvidence = expandLinkedEvidence(filtered, {
     vault: config.vault,
     projects,
     scope,
     structure: config.structure,
     max: boundedCount(options.maxRelated, 2, 0, 2),
   });
+  const relatedEvidence = filterTemporalEvidence(expandedRelatedEvidence, temporalIntent);
 
   const indexFresh = scopeLexicalFresh;
   const assessmentEvidence = [...filtered, ...relatedEvidence];

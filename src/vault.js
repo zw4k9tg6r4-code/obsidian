@@ -5,6 +5,18 @@ import YAML from 'yaml';
 import { isPathInside } from './config.js';
 import { DEFAULT_STRUCTURE, braceGlob } from './structure.js';
 
+function normalizeFrontmatterTypes(obj) {
+  const normalized = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value instanceof Date) {
+      normalized[key] = value.toISOString().slice(0, 10);
+    } else {
+      normalized[key] = value;
+    }
+  }
+  return normalized;
+}
+
 export function parseMarkdown(filePath) {
   const text = readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
   let frontmatter = {};
@@ -17,7 +29,8 @@ export function parseMarkdown(filePath) {
     if (match) {
       const raw = rest.slice(0, match.index).trim();
       try {
-        frontmatter = YAML.parse(raw) || {};
+        const parsed = YAML.parse(raw);
+        frontmatter = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? normalizeFrontmatterTypes(parsed) : {};
       } catch {
         frontmatter = {};
       }
@@ -28,7 +41,8 @@ export function parseMarkdown(filePath) {
 }
 
 function extractIdentity(body, label) {
-  const match = body.match(new RegExp(`^-\\s*${label}：\\s*(.+)$`, 'm'));
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = body.match(new RegExp(`^(?:[-*]|\\d+\\.)\\s*(?:\\*\\*)?${escaped}(?:\\*\\*)?\\s*[:：]\\s*(.+)$`, 'm'));
   return match?.[1]?.trim() || '';
 }
 
@@ -81,9 +95,13 @@ function normalize(value) {
 
 function positiveMatch(query, project) {
   const q = normalize(query);
-  const names = [project.name, project.mainObject]
-    .map(normalize)
-    .filter((value) => value.length >= 2);
+  const rawNames = [
+    project.name,
+    project.mainObject,
+    project.name.replace(/(项目|仓配|运输|服务|系统)$/g, ''),
+    project.mainObject ? project.mainObject.replace(/(仓配|运输|服务)$/g, '') : '',
+  ];
+  const names = [...new Set(rawNames.map(normalize).filter((value) => value.length >= 2))];
   return names.some((value) => q.includes(value));
 }
 

@@ -37,7 +37,7 @@
     "test:coverage": "node --test --experimental-test-coverage",
     "eval": "node scripts/run-eval.mjs",
     "eval:hybrid": "node scripts/run-eval.mjs --semantic",
-    "verify": "npm run check && npm test",
+    "verify": "npm run check && npm test && npm run eval",
     "pack:check": "npm pack --dry-run"
   },
   "engines": {

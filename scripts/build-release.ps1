@@ -1,12 +1,17 @@
 [CmdletBinding()]
 param(
-    [string]$SourceRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$SourceRoot,
     [string]$OutputRoot,
     [string]$ArchiveName
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
+    $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $SourceRoot = Split-Path -Parent $scriptDirectory
+}
 
 function Resolve-FullPath {
     param(

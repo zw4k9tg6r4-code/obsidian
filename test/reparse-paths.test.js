@@ -103,6 +103,18 @@ test('normal non-reparse release output remains supported', windowsOnly, () => {
   }
 });
 
+test('build-release resolves its repository source root when SourceRoot is omitted', windowsOnly, () => {
+  const root = mkdtempSync(join(tmpdir(), 'sbrain-release-default-source-'));
+  try {
+    const output = join(root, 'output');
+    const run = runScript(buildScript, ['-OutputRoot', output], 60_000);
+    assert.equal(run.status, 0, combinedOutput(run));
+    assert.ok(readdirSync(output).some((name) => name.endsWith('.zip')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('allowlisted top-level directory rejects a junction before traversal', windowsOnly, () => {
   const root = mkdtempSync(join(tmpdir(), 'sbrain-reparse-directory-'));
   try {

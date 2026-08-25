@@ -1,13 +1,153 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { StringDecoder } from 'node:string_decoder';
 import { DatabaseSync } from 'node:sqlite';
 import { collectSemanticChunks } from './chunker.js';
 import { writeJsonAtomic } from './io.js';
 
 export const SEMANTIC_MODEL = 'BAAI/bge-small-zh-v1.5';
 export const FASTEMBED_VERSION = '0.8.0';
+
+const activeChildProcesses = new Set();
+const activePids = new Set();
+let isShuttingDown = false;
+let shutdownTreeKillFailed = false;
+
+export const workerKillFaults = {
+  spawnSyncAdapter: (...args) => spawnSync(...args),
+};
+
+export function setWorkerShuttingDown(val = true) {
+  isShuttingDown = Boolean(val);
+}
+
+export function resetWorkerShutdownStateForTests() {
+  isShuttingDown = false;
+  shutdownTreeKillFailed = false;
+  activeChildProcesses.clear();
+  activePids.clear();
+  workerKillFaults.spawnSyncAdapter = (...args) => spawnSync(...args);
+}
+
+function killProcessTreeSync(pid) {
+  if (!pid || isProcessDead(pid)) return true;
+  try {
+    if (process.platform === 'win32') {
+      const killed = workerKillFaults.spawnSyncAdapter(
+        'taskkill.exe',
+        ['/F', '/T', '/PID', String(pid)],
+        { windowsHide: true },
+      );
+      const terminated = !killed.error && killed.status === 0;
+      if (!terminated && !isProcessDead(pid)) {
+        process.stderr.write(`[WARN] taskkill could not terminate worker PID ${pid}: ${killed.error?.message || `exit status ${killed.status}`}\n`);
+        return false;
+      }
+      return true;
+    } else {
+      process.kill(pid, 'SIGKILL');
+      return true;
+    }
+  } catch {
+    return isProcessDead(pid);
+  }
+}
+
+function isProcessDead(pid) {
+  if (!pid) return true;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    return err.code === 'ESRCH';
+  }
+}
+
+export function registerActiveWorker(child) {
+  if (!child) return;
+  const pid = child.pid;
+  if (pid) activePids.add(pid);
+
+  const onChildExit = () => {
+    activeChildProcesses.delete(child);
+    if (pid) activePids.delete(pid);
+  };
+  child.once('exit', onChildExit);
+  child.once('close', onChildExit);
+  activeChildProcesses.add(child);
+
+  if (isShuttingDown) {
+    try { child.kill('SIGTERM'); } catch {}
+    if (pid && !killProcessTreeSync(pid)) shutdownTreeKillFailed = true;
+  }
+}
+
+export function getActiveWorkersCount() {
+  return activeChildProcesses.size;
+}
+
+export async function killAllActiveWorkers({ waitMs = 2000 } = {}) {
+  if (!isShuttingDown) shutdownTreeKillFailed = false;
+  isShuttingDown = true;
+  const start = Date.now();
+  const forceKillThreshold = Math.min(waitMs, 500);
+  const treeKillAttempted = new Set();
+  let emptySince = null;
+
+  while (Date.now() - start < waitMs) {
+    const unexited = Array.from(activeChildProcesses).filter(
+      (c) => c && c.exitCode === null && c.signalCode === null
+    );
+
+    if (unexited.length === 0) {
+      for (const child of Array.from(activeChildProcesses)) {
+        if (child.exitCode !== null || child.signalCode !== null) activeChildProcesses.delete(child);
+      }
+      for (const pid of Array.from(activePids)) {
+        if (isProcessDead(pid)) activePids.delete(pid);
+      }
+      if (activeChildProcesses.size === 0 && activePids.size === 0) {
+        if (emptySince === null) emptySince = Date.now();
+        if (Date.now() - emptySince >= Math.min(150, waitMs)) return !shutdownTreeKillFailed;
+      } else {
+        emptySince = null;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      continue;
+    }
+    emptySince = null;
+
+    const elapsed = Date.now() - start;
+    for (const child of unexited) {
+      if (process.platform === 'win32' && child.pid && !treeKillAttempted.has(child.pid)) {
+        treeKillAttempted.add(child.pid);
+        if (!killProcessTreeSync(child.pid)) {
+          shutdownTreeKillFailed = true;
+          try { child.kill('SIGTERM'); } catch {}
+        }
+      } else if (process.platform !== 'win32' && elapsed >= forceKillThreshold && child.pid) {
+        if (!killProcessTreeSync(child.pid)) shutdownTreeKillFailed = true;
+      } else {
+        try { child.kill('SIGTERM'); } catch {}
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, 25));
+  }
+
+  for (const child of Array.from(activeChildProcesses)) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      activeChildProcesses.delete(child);
+    }
+  }
+  for (const pid of Array.from(activePids)) {
+    if (isProcessDead(pid)) activePids.delete(pid);
+  }
+
+  return activeChildProcesses.size === 0 && activePids.size === 0 && !shutdownTreeKillFailed;
+}
 
 export function isSemanticRuntimeConfigured(config) {
   const py = pythonCommand(config);
@@ -31,9 +171,18 @@ function pythonCommand(config) {
   return process.platform === 'win32' ? 'py.exe' : 'python3';
 }
 
-function runPython(config, payload, { timeoutMs = 10 * 60 * 1000 } = {}) {
+export function runPython(config, payload, { timeoutMs = 10 * 60 * 1000 } = {}) {
   const worker = join(dirname(fileURLToPath(import.meta.url)), 'fastembed_worker.py');
   return new Promise((resolve) => {
+    if (isShuttingDown) {
+      resolve({
+        ok: false,
+        error: 'Semantic worker spawn rejected: shutdown in progress',
+        semanticReady: false,
+      });
+      return;
+    }
+
     const child = spawn(pythonCommand(config), ['-X', 'utf8', worker], {
       env: {
         ...process.env,
@@ -46,17 +195,50 @@ function runPython(config, payload, { timeoutMs = 10 * 60 * 1000 } = {}) {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
+
+    registerActiveWorker(child);
+
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-    child.on('error', (error) => {
+    let settled = false;
+
+    const cleanup = () => {
       clearTimeout(timer);
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try {
+        if (process.platform === 'win32' && child.pid) {
+          spawn('taskkill.exe', ['/F', '/PID', String(child.pid), '/T'], { windowsHide: true });
+        } else {
+          child.kill('SIGKILL');
+        }
+      } catch {}
+      resolve({ ok: false, reason: `FastEmbed worker timed out after ${timeoutMs}ms`, stderr: stderr.slice(-2000) });
+    }, timeoutMs);
+
+    child.stdin.on('error', () => {
+      // Catch EPIPE/ECONNRESET if Python child exited early before reading stdin
+    });
+    child.stdout.on('data', (chunk) => { stdout += stdoutDecoder.write(chunk); });
+    child.stderr.on('data', (chunk) => { stderr += stderrDecoder.write(chunk); });
+    child.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve({ ok: false, reason: error.message, stderr: stderr.slice(-2000) });
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      cleanup();
+      stdout += stdoutDecoder.end();
+      stderr += stderrDecoder.end();
       if (code !== 0) {
         resolve({
           ok: false,
@@ -79,18 +261,26 @@ export function calculateSemanticHealth(config, collections) {
   if (!existsSync(config.semanticDbPath)) {
     return { available: false, currentCoverage: 0, historyCoverage: 0, currentPending: 0, historyPending: 0, totalChunksInDb: 0 };
   }
-  let db;
+  let db = null;
+  let rows = null;
   try {
     db = new DatabaseSync(config.semanticDbPath, { readOnly: true });
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chunks'").all();
     if (tables.length === 0) {
       db.close();
+      db = null;
       return { available: false, currentCoverage: 0, historyCoverage: 0, currentPending: 0, historyPending: 0, totalChunksInDb: 0 };
     }
-    const rows = db.prepare('SELECT id, collections, source_hash FROM chunks').all();
+    rows = db.prepare('SELECT id, collections, source_hash FROM chunks').all();
     db.close();
+    db = null;
+  } catch {
+    if (db) try { db.close(); } catch {}
+    return { available: false, currentCoverage: 0, historyCoverage: 0, currentPending: 0, historyPending: 0, totalChunksInDb: 0 };
+  }
 
-    if (rows.length === 0) {
+  try {
+    if (!rows || rows.length === 0) {
       return { available: false, currentCoverage: 0, historyCoverage: 0, currentPending: 0, historyPending: 0, totalChunksInDb: 0 };
     }
 
@@ -132,7 +322,6 @@ export function calculateSemanticHealth(config, collections) {
       totalChunksInDb: rows.length,
     };
   } catch {
-    if (db) try { db.close(); } catch {}
     return { available: false, currentCoverage: 0, historyCoverage: 0, currentPending: 0, historyPending: 0, totalChunksInDb: 0 };
   }
 }

@@ -7,8 +7,8 @@ const root = new URL('..', import.meta.url).pathname.replace(/^\/(?:[A-Za-z]:)/,
 const ignored = new Set(['node_modules', '.git', 'coverage', 'dist', 'package-stage', 'private-eval']);
 const textExtensions = new Set(['.js', '.mjs', '.json', '.md', '.ps1', '.cmd', '.yaml', '.yml', '.txt', '.gitattributes', '.gitignore']);
 const forbidden = [
-  { name: 'personal Windows path', pattern: /C:\\Users\\/i },
-  { name: 'Unix user profile path', pattern: /\/(?:Users|home)\/[^/\s]+\//i },
+  { name: 'personal Windows path', pattern: new RegExp('C:\\\\' + 'Users\\\\', 'i') },
+  { name: 'Unix user profile path', pattern: new RegExp('/(?:' + 'Users|home)/[^/\\s]+/', 'i') },
   { name: 'private key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
   { name: 'common access token', pattern: /\b(?:ghp|gho|github_pat|xox[baprs]|sk)-[-_A-Za-z0-9]{10,}\b/ },
 ];

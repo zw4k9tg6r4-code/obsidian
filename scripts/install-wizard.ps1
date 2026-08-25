@@ -120,6 +120,7 @@ function Get-VaultMarkdownFingerprint {
 }
 
 function Select-VaultFolder {
+    $dialog = $null
     try {
         Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
         $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
@@ -138,6 +139,11 @@ function Select-VaultFolder {
         $typed = Read-Host 'Enter the full path of the Obsidian Vault whose root contains AGENTS.md'
         if (-not $typed) { throw 'VaultPath is required.' }
         return $typed
+    }
+    finally {
+        if ($null -ne $dialog) {
+            $dialog.Dispose()
+        }
     }
 }
 

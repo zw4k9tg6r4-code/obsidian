@@ -19,9 +19,15 @@ export const DEFAULT_STRUCTURE = Object.freeze({
 });
 
 const LIST_KEYS = new Set(['homeNotes', 'governanceFiles']);
+const DOS_DEVICE_PATTERN = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]|CONIN\$|CONOUT\$)(\..*)?$/i;
 
 function assertRelativePath(key, value) {
   const normalized = String(value).replaceAll('\\', '/');
+  for (const segment of normalized.split('/')) {
+    if (DOS_DEVICE_PATTERN.test(segment.trim())) {
+      throw new Error(`structure.${key} contains reserved Windows device name: ${segment}`);
+    }
+  }
   if (isAbsolute(normalized) || /^[A-Za-z]:/.test(normalized) || normalized.startsWith('/')
     || normalized.split('/').includes('..') || normalized === '.') {
     throw new Error(`structure.${key} must be a relative path inside the vault: ${value}`);

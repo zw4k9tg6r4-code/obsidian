@@ -110,6 +110,7 @@
           "required": [
             "schemaVersion",
             "traceId",
+            "eventId",
             "occurredAt",
             "event",
             "candidateId",
@@ -121,6 +122,7 @@
           "properties": {
             "schemaVersion": { "const": 1 },
             "traceId": { "type": "string", "format": "uuid" },
+            "eventId": { "type": "string", "format": "uuid" },
             "occurredAt": { "type": "string", "format": "date-time" },
             "event": { "const": "candidate-transition" },
             "candidateId": { "type": "string", "format": "uuid" },

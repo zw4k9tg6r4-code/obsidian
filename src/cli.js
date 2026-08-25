@@ -46,6 +46,11 @@ function option(flags, ...names) {
   return undefined;
 }
 
+function isBooleanFlag(flags, name) {
+  const value = flags[name];
+  return value === true || value === 'true' || value === '1';
+}
+
 function runtimeOptions(flags) {
   return { vault: option(flags, 'vault'), dataDir: option(flags, 'data-dir') };
 }
@@ -96,7 +101,7 @@ async function main() {
   let result;
   if (command === 'index') {
     const config = resolveRuntimeConfig(runtimeOptions(flags));
-    result = await indexVault(config, { semantic: flags.semantic === true });
+    result = await indexVault(config, { semantic: isBooleanFlag(flags, 'semantic') });
   } else if (command === 'sync') {
     const timeVal = option(flags, 'time');
     if (timeVal && !['current', 'history', 'all'].includes(timeVal)) {
@@ -126,7 +131,7 @@ async function main() {
       temporalIntent: option(flags, 'time') || 'current',
       maxEvidence: option(flags, 'max-evidence'),
       maxRelated: option(flags, 'max-related'),
-      lexicalOnly: flags['lexical-only'] === true,
+      lexicalOnly: isBooleanFlag(flags, 'lexical-only'),
     });
   } else if (command === 'health') {
     result = publicHealth(await readHealth(resolveRuntimeConfig(runtimeOptions(flags))));
@@ -152,7 +157,7 @@ async function main() {
     } else if (action === 'confirm') {
       result = confirmCandidate(config, {
         id: option(flags, 'id'),
-        userConfirmed: flags['user-confirmed'] === true,
+        userConfirmed: isBooleanFlag(flags, 'user-confirmed'),
         sourceRef: option(flags, 'source-ref'),
       });
     } else if (action === 'activate') {
@@ -177,9 +182,11 @@ async function main() {
     throw new Error(`Unknown command: ${command}`);
   }
 
-  if (flags.json) console.log(JSON.stringify(result));
+  if (isBooleanFlag(flags, 'json')) console.log(JSON.stringify(result));
   else printHuman(command, result);
-  if (command === 'index' && flags.semantic === true && result.semantic?.ok !== true) {
+  if (command === 'index' && isBooleanFlag(flags, 'semantic') && result.semantic?.ok !== true) {
+    process.exitCode = 2;
+  } else if (command === 'sync' && result?.ok !== true) {
     process.exitCode = 2;
   }
 }

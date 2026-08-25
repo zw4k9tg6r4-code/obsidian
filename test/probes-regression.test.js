@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { resolveRuntimeConfig } from '../src/config.js';
 import { indexVault, syncVault, readHealth } from '../src/qmd-adapter.js';
@@ -249,4 +250,79 @@ test('P2-3 probe: micro-budget under 100ms exits early without spawning worker',
   assert.equal(res.ok, true);
   assert.equal(res.embedded, 0, 'Zero chunks embedded for micro budget');
   assert.ok(res.pending >= 1, 'Pending chunks recorded');
+});
+
+test('R1-01: scan-release.ps1 does not misidentify SHA-256 hash containing phone-like substring as mobile number', (t) => {
+  if (process.platform !== 'win32') return t.skip('Windows only');
+  const root = mkdtempSync(join(tmpdir(), 'sbrain-scan-probe-'));
+  const source = join(root, 'source');
+  const outputRoot = join(root, 'output');
+  mkdirSync(source, { recursive: true });
+
+  const fakeHash = 'a1f94813812345678b40cdef1234567890abcdef1234567890abcdef12345678';
+  writeFileSync(join(source, 'README.md'), `# Test\n\nCommit hash: ${fakeHash}\n`, 'utf8');
+  writeFileSync(join(source, 'AGENTS.md'), '# Agents\n- PlanOnly\n- IndexMode lexical\ninstall-wizard.ps1\n', 'utf8');
+  writeFileSync(join(source, 'START-HERE.md'), '# Start\n', 'utf8');
+  writeFileSync(join(source, 'INSTALL.cmd'), '@echo off\r\n%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -File "%INSTALLER_ROOT%scripts\\install-wizard.ps1"\r\nexit /b %INSTALL_EXIT%\r\n', 'utf8');
+  writeFileSync(join(source, 'LICENSE'), 'MIT License\n', 'utf8');
+  writeFileSync(join(source, 'SECURITY.md'), '# Security\n', 'utf8');
+  writeFileSync(join(source, 'PRIVACY.md'), '# Privacy\n', 'utf8');
+  writeFileSync(join(source, 'THIRD_PARTY_NOTICES.md'), '# Notices\n', 'utf8');
+  writeFileSync(join(source, 'package.json'), JSON.stringify({ name: 'synthetic-release', version: '0.0.0', private: true }), 'utf8');
+  writeFileSync(join(source, 'package-lock.json'), JSON.stringify({ name: 'synthetic-release', version: '0.0.0', lockfileVersion: 3 }), 'utf8');
+
+  const repository = fileURLToPath(new URL('..', import.meta.url));
+  cpSync(join(repository, 'scripts'), join(source, 'scripts'), { recursive: true });
+  cpSync(join(repository, 'schemas'), join(source, 'schemas'), { recursive: true });
+  cpSync(join(repository, 'skill'), join(source, 'skill'), { recursive: true });
+  cpSync(join(repository, 'src'), join(source, 'src'), { recursive: true });
+  cpSync(join(repository, 'docs'), join(source, 'docs'), { recursive: true });
+  cpSync(join(repository, 'test'), join(source, 'test'), { recursive: true });
+  writeFileSync(join(source, 'requirements-semantic.txt'), 'fastembed==0.8.0\nonnxruntime==1.20.1; platform_system == "Windows"\n', 'utf8');
+
+  const buildScript = join(repository, 'scripts', 'build-release.ps1');
+  const buildRes = spawnSync('powershell.exe', ['-NoProfile', '-File', buildScript, '-SourceRoot', source, '-OutputRoot', outputRoot], {
+    encoding: 'utf8',
+  });
+  assert.equal(buildRes.status, 0, `Build release must succeed: ${buildRes.stderr}`);
+
+  const scanScript = join(fileURLToPath(new URL('..', import.meta.url)), 'scripts', 'scan-release.ps1');
+  const stageDirName = readdirSync(outputRoot).find((name) => !name.endsWith('.zip') && !name.endsWith('.tar.gz'));
+  const stage = join(outputRoot, stageDirName);
+  const res = spawnSync('powershell.exe', ['-NoProfile', '-File', scanScript, '-Path', stage, '-AllowSyntheticFixtures'], {
+    encoding: 'utf8',
+  });
+
+  assert.equal(res.status, 0, `First round scan with fake hash in SHA256SUMS must succeed with exit code 0: ${res.stderr || res.stdout}`);
+  assert.ok(!res.stdout.includes('mainland-mobile-number'), 'SHA-256 hash containing phone-like digits must not trigger mainland-mobile-number finding');
+
+  // 2. Write a real mobile number and verify it IS detected
+  const testPhone = '138' + '12345678';
+  writeFileSync(join(stage, 'README.md'), `# Test\n\n联系电话：${testPhone}\n`, 'utf8');
+  const resFail = spawnSync('powershell.exe', ['-NoProfile', '-File', scanScript, '-Path', stage, '-AllowSyntheticFixtures'], {
+    encoding: 'utf8',
+  });
+  const combinedOutput = `${resFail.stdout || ''}\n${resFail.stderr || ''}`;
+  assert.ok(combinedOutput.includes('mainland-mobile-number'), 'Genuine mobile number must trigger mainland-mobile-number finding');
+});
+
+test('P2-03 probe: WAL checkpoint busy/error degrades health and reports reason', async () => {
+  const { config } = createSyntheticEnv();
+  await indexVault(config, { semantic: false });
+
+  // 1. Initial healthy state
+  const initialHealth = await readHealth(config);
+  assert.equal(initialHealth.current.lexicalFresh, true);
+
+  // 2. Simulate WAL checkpoint contention recorded in metadata.json
+  const metadata = JSON.parse(readFileSync(config.metadataPath, 'utf8'));
+  metadata.checkpointStatus = { busy: true, code: 5, error: 'sqlite3_wal_checkpoint_v2 busy' };
+  writeFileSync(config.metadataPath, JSON.stringify(metadata, null, 2), 'utf8');
+
+  // 3. Verify health reading reflects degraded status
+  const degradedHealth = await readHealth(config);
+  assert.equal(degradedHealth.current.degraded, true, 'Checkpoint busy must mark current scope as degraded');
+  assert.equal(degradedHealth.current.semanticHealthy, false, 'Semantic healthy must be false when checkpoint is degraded');
+  assert.equal(degradedHealth.current.reason, 'sqlite wal checkpoint is busy or degraded');
+  assert.deepEqual(degradedHealth.metadata.checkpointStatus, { busy: true, code: 5, error: 'sqlite3_wal_checkpoint_v2 busy' });
 });

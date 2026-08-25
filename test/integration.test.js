@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -84,6 +84,34 @@ test('history search may retrieve superseded process notes', async () => {
     lexicalOnly: true,
   });
   assert.ok(result.evidence.some((item) => item.path.includes('/02-过程/旧方案.md')));
+});
+
+test('current search filters superseded and expired Wiki-linked evidence', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'sbrain-related-temporal-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sandboxVault = join(root, 'vault');
+  const dataDir = join(root, 'data');
+  cpSync(vault, sandboxVault, { recursive: true });
+  const projectHome = join(sandboxVault, '02-项目', '北辰仓配项目', '项目主页.md');
+  writeFileSync(
+    projectHome,
+    `${readFileSync(projectHome, 'utf8')}\n当前关联证据检查入口：[[02-过程/旧方案]]。\n`,
+    'utf8',
+  );
+  const config = resolveRuntimeConfig({ vault: sandboxVault, dataDir });
+  await indexVault(config, { semantic: false });
+
+  const result = await searchSecondBrain({
+    vault: sandboxVault,
+    dataDir,
+    query: '当前关联证据检查入口',
+    projectName: '北辰仓配项目',
+    lexicalOnly: true,
+  });
+
+  assert.ok(result.evidence.some((item) => item.path.endsWith('项目主页.md')));
+  assert.ok(result.relatedEvidence.every((item) => !['superseded', 'expired', 'historical'].includes(item.state)));
+  assert.ok(result.relatedEvidence.every((item) => !item.path.includes('/02-过程/旧方案.md')));
 });
 
 test('ambiguous project identity abstains before search', async () => {

@@ -7,6 +7,11 @@
   "required": ["schemaVersion", "records"],
   "properties": {
     "schemaVersion": { "const": 1 },
+    "recoveredFrom": { "type": "string" },
+    "pendingAudits": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
     "records": {
       "type": "array",
       "items": { "$ref": "#/$defs/record" }

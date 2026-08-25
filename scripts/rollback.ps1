@@ -104,20 +104,40 @@ function Move-DirectoryExact([string]$Source, [string]$Destination) {
     [void](Assert-SafeExistingTree -Path $Source -Label 'move source' -ExpectedType Directory)
     [void](Assert-NoReparseTraversal -Path $Destination -Label 'move destination')
     if (Test-Path -LiteralPath $Destination) { throw "Move destination already exists: $Destination" }
-    [System.IO.Directory]::Move(
-        [System.IO.Path]::GetFullPath($Source),
-        [System.IO.Path]::GetFullPath($Destination)
-    )
+    $srcFull = [System.IO.Path]::GetFullPath($Source)
+    $destFull = [System.IO.Path]::GetFullPath($Destination)
+    $attempts = 0
+    while ($true) {
+        try {
+            [System.IO.Directory]::Move($srcFull, $destFull)
+            break
+        }
+        catch {
+            $attempts++
+            if ($attempts -ge 4) { throw $_ }
+            Start-Sleep -Milliseconds ($attempts * 100)
+        }
+    }
 }
 
 function Move-FileExact([string]$Source, [string]$Destination) {
     [void](Assert-SafeExistingTree -Path $Source -Label 'move source' -ExpectedType File)
     [void](Assert-NoReparseTraversal -Path $Destination -Label 'move destination')
     if (Test-Path -LiteralPath $Destination) { throw "Move destination already exists: $Destination" }
-    [System.IO.File]::Move(
-        [System.IO.Path]::GetFullPath($Source),
-        [System.IO.Path]::GetFullPath($Destination)
-    )
+    $srcFull = [System.IO.Path]::GetFullPath($Source)
+    $destFull = [System.IO.Path]::GetFullPath($Destination)
+    $attempts = 0
+    while ($true) {
+        try {
+            [System.IO.File]::Move($srcFull, $destFull)
+            break
+        }
+        catch {
+            $attempts++
+            if ($attempts -ge 4) { throw $_ }
+            Start-Sleep -Milliseconds ($attempts * 100)
+        }
+    }
 }
 
 function Get-FileSha256([string]$Path) {

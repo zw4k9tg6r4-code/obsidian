@@ -3,12 +3,29 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DEFAULT_STRUCTURE, resolveStructure } from './structure.js';
 
+const DOS_DEVICE_PATTERN = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]|CONIN\$|CONOUT\$)(\..*)?$/i;
+
+export function normalizePathSeparators(p) {
+  if (!p) return '';
+  let s = String(p).replaceAll('\\', '/');
+  if (s.startsWith('//?/UNC/')) s = '//' + s.slice(8);
+  else if (s.startsWith('//?/') || s.startsWith('//./')) s = s.slice(4);
+  else if (s.startsWith('\\\\?\\UNC\\')) s = '\\\\' + s.slice(8);
+  else if (s.startsWith('\\\\?\\') || s.startsWith('\\\\.\\')) s = s.slice(4);
+  return s;
+}
+
 export const DEFAULT_DATA_DIR = process.platform === 'win32'
   ? join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'CodexSecondBrain')
   : join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'CodexSecondBrain');
 
 export function isPathInside(root, candidate) {
-  const rel = relative(resolve(root), resolve(candidate));
+  const cleanCandidate = String(candidate || '');
+  const unextended = cleanCandidate.replace(/^(\\\\\?\\([A-Za-z]:|UNC\\[^\\]+\\[^\\]+)|[A-Za-z]:)/i, '');
+  if (unextended.includes(':')) return false;
+  const normRoot = resolve(normalizePathSeparators(root));
+  const normCandidate = resolve(normalizePathSeparators(candidate));
+  const rel = relative(normRoot, normCandidate);
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
 }
 
@@ -133,7 +150,20 @@ export function resolveRuntimeConfig(options = {}) {
 
 export function assertSourcePath(vault, candidate) {
   if (!candidate) throw new Error('Source path is required.');
-  const absolute = isAbsolute(candidate) ? resolve(candidate) : resolve(vault, candidate);
+  const raw = String(candidate);
+  const unextended = raw.replace(/^(\\\\\?\\([A-Za-z]:|UNC\\[^\\]+\\[^\\]+)|[A-Za-z]:)/i, '');
+  if (unextended.includes(':')) {
+    throw new Error(`Source path contains illegal stream delimiter: ${candidate}`);
+  }
+  if (/^[A-Za-z]:[^\\/]/.test(raw)) {
+    throw new Error(`Drive-relative paths are forbidden: ${candidate}`);
+  }
+  const baseName = basename(raw).trim();
+  if (DOS_DEVICE_PATTERN.test(baseName)) {
+    throw new Error(`Source path references reserved device name: ${candidate}`);
+  }
+  const normCandidate = normalizePathSeparators(candidate);
+  const absolute = isAbsolute(normCandidate) ? resolve(normCandidate) : resolve(vault, normCandidate);
   if (!existsSync(absolute)) throw new Error(`Source file does not exist: ${absolute}`);
   const real = realpathSync.native(absolute);
   if (!isPathInside(vault, real)) throw new Error(`Source escapes vault: ${candidate}`);

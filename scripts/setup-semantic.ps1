@@ -64,18 +64,61 @@ $venvPython = Join-Path $venvDir 'Scripts\python.exe'
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 [void](Assert-NoReparseTraversal -Path $runtimeDir -Label 'created semantic runtime directory')
 
-$uv = Get-Command uv -ErrorAction SilentlyContinue
-if ($uv) {
+function Find-GenuinePythonRuntime {
+    $uv = Get-Command uv -ErrorAction SilentlyContinue
+    if ($uv) {
+        try {
+            $uvVer = & $uv.Source --version 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                return @{ Engine = 'uv'; Executable = $uv.Source }
+            }
+        } catch {}
+    }
+
+    $candidates = @()
+    $pyLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+        $candidates += @{ Cmd = $pyLauncher.Source; Args = @('-3.12') }
+        $candidates += @{ Cmd = $pyLauncher.Source; Args = @('-3.11') }
+        $candidates += @{ Cmd = $pyLauncher.Source; Args = @('-3.10') }
+        $candidates += @{ Cmd = $pyLauncher.Source; Args = @('-3') }
+    }
+    $sysPython = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($sysPython) { $candidates += @{ Cmd = $sysPython.Source; Args = @() } }
+
+    foreach ($cand in $candidates) {
+        try {
+            $probeScript = 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")'
+            $callArgs = @() + $cand.Args + @('-c', $probeScript)
+            $out = & $cand.Cmd @callArgs 2>$null
+            if ($LASTEXITCODE -eq 0 -and $out) {
+                $parts = $out.Trim().Split('.')
+                if ($parts.Length -ge 2 -and [int]$parts[0] -eq 3 -and [int]$parts[1] -ge 10) {
+                    return @{
+                        Engine = 'python'
+                        Executable = $cand.Cmd
+                        BaseArgs = $cand.Args
+                    }
+                }
+            }
+        } catch {}
+    }
+
+    throw 'No compatible Python (3.10+) or uv runtime found. Windows Store alias was rejected. Please install standard Python 3.10-3.12.'
+}
+
+$runtime = Find-GenuinePythonRuntime
+if ($runtime.Engine -eq 'uv') {
     if (-not (Test-Path -LiteralPath $venvPython)) {
-        & $uv.Source venv --python 3.12 $venvDir
+        & $runtime.Executable venv --python 3.12 $venvDir
         if ($LASTEXITCODE -ne 0) { throw "uv venv failed with exit code $LASTEXITCODE" }
     }
-    & $uv.Source pip install --python $venvPython --requirement $requirements
+    & $runtime.Executable pip install --python $venvPython --requirement $requirements
     if ($LASTEXITCODE -ne 0) { throw "uv pip install failed with exit code $LASTEXITCODE" }
 } else {
-    $python = Get-Command python -ErrorAction Stop
     if (-not (Test-Path -LiteralPath $venvPython)) {
-        & $python.Source -m venv $venvDir
+        $venvArgs = @() + $runtime.BaseArgs + @('-m', 'venv', $venvDir)
+        & $runtime.Executable @venvArgs
         if ($LASTEXITCODE -ne 0) { throw "python -m venv failed with exit code $LASTEXITCODE" }
     }
     & $venvPython -m pip install --requirement $requirements

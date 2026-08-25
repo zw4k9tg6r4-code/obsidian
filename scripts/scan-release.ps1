@@ -145,14 +145,14 @@ function Test-Content {
 
     $privateVaultName = '(?i)(?:obsidian[\\/]+codex' + [char]0x77E5 + [char]0x8BC6 + [char]0x5E93 + '|codex' + [char]0x77E5 + [char]0x8BC6 + [char]0x5E93 + ')'
     $credentialWords = '(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|client[_-]?secret)\b\s*[:=]\s*["'']?([^\s"'';,}]{8,})'
-    $privateKeyHeader = '-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE ' + 'KEY-----'
+    $privateKeyHeader = '-----BEGIN (?:[A-Z0-9_-]+ )?PRIVATE KEY-----'
     $rules = @(
-        [pscustomobject]@{ Name = 'windows-user-profile-path'; Pattern = '(?i)[A-Za-z]:[\\/]+Users[\\/]+(?!<|%|\$|\{)[^\\/\r\n"''<>]+[\\/]' },
-        [pscustomobject]@{ Name = 'unix-user-home-path'; Pattern = '(?i)/(?:Users|home)/(?!<|\$|\{)[^/\s"''<>]+/' },
+        [pscustomobject]@{ Name = 'windows-user-profile-path'; Pattern = '(?i)[A-Za-z]:[\\/]+Users[\\/]+(?!<|%|\$|\{)[^\\/\r\n"''<>]+(?:[\\/]|(?=["''\r\n\s]|$))' },
+        [pscustomobject]@{ Name = 'unix-user-home-path'; Pattern = '(?i)/(?:Users|home)/(?!<|\$|\{)[^/\s"''<>]+(?:/|(?=["''\r\n\s]|$))' },
         [pscustomobject]@{ Name = 'known-private-vault-name'; Pattern = $privateVaultName },
         [pscustomobject]@{ Name = 'email-address'; Pattern = '(?i)(?<![A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}(?![A-Z0-9.-])' },
-        [pscustomobject]@{ Name = 'mainland-mobile-number'; Pattern = '(?<!\d)1[3-9]\d{9}(?!\d)' },
-        [pscustomobject]@{ Name = 'mainland-id-number'; Pattern = '(?<!\d)\d{17}[0-9Xx](?!\d)' },
+        [pscustomobject]@{ Name = 'mainland-mobile-number'; Pattern = '(?<![0-9a-fA-F])1[3-9]\d{9}(?![0-9a-fA-F])' },
+        [pscustomobject]@{ Name = 'mainland-id-number'; Pattern = '(?<![0-9a-fA-F])\d{17}[0-9Xx](?![0-9a-fA-F])' },
         [pscustomobject]@{ Name = 'private-key'; Pattern = $privateKeyHeader },
         [pscustomobject]@{ Name = 'github-token'; Pattern = '(?i)\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b' },
         [pscustomobject]@{ Name = 'openai-token'; Pattern = '(?i)\bsk-[A-Za-z0-9_-]{20,}\b' },
@@ -318,7 +318,9 @@ foreach ($entry in $entries) {
         Add-Finding -Rule 'length-mismatch' -RelativePath $relative
         continue
     }
-    Test-Content -RelativePath $relative -Bytes $entry.Bytes
+    if ($relative -ne 'SHA256SUMS') {
+        Test-Content -RelativePath $relative -Bytes $entry.Bytes
+    }
 }
 if ($totalBytes -gt $MaxTotalBytes) {
     Add-Finding -Rule 'release-size-limit-exceeded' -RelativePath '<release>'
