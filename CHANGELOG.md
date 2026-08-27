@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Platform-Aware Eval Latency Gate**: Raised the eval P95 latency gate threshold on Windows (250ms versus 150ms elsewhere) so windows-latest CI runner noise cannot fail verification while the latency regression guard remains effective.
+
 ## [0.2.0] - 2026-08-24
 
 ### Added
