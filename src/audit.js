@@ -149,7 +149,7 @@ export function isValidAuditRecord(record) {
   if (record.event === 'candidate-transition') {
     const allowed = new Set([
       'schemaVersion', 'traceId', 'eventId', 'occurredAt', 'event', 'candidateId',
-      'from', 'to', 'confirmationType', 'sourceRefs',
+      'from', 'to', 'confirmationType', 'confirmedBy', 'sourceRefs',
     ]);
     return hasOnlyKeys(record, allowed)
       && UUID_PATTERN.test(String(record.eventId || ''))
@@ -157,6 +157,10 @@ export function isValidAuditRecord(record) {
       && (record.from === null || CANDIDATE_STATES.has(record.from))
       && CANDIDATE_STATES.has(record.to)
       && (record.confirmationType === null || CONFIRMATION_TYPES.has(record.confirmationType))
+      && (record.confirmedBy === null
+        || (typeof record.confirmedBy === 'string'
+          && record.confirmedBy.trim().length > 0
+          && record.confirmedBy.length <= 100))
       && Array.isArray(record.sourceRefs) && record.sourceRefs.length <= 32
       && new Set(record.sourceRefs).size === record.sourceRefs.length
       && record.sourceRefs.every((ref) => /^sha256:[0-9a-f]{64}$/.test(ref)
@@ -226,6 +230,9 @@ function normalizeCandidateTransition(event) {
     from: event.from ?? null,
     to: event.to,
     confirmationType: event.confirmationType ?? null,
+    confirmedBy: typeof event.confirmedBy === 'string' && event.confirmedBy.trim()
+      ? event.confirmedBy.trim().slice(0, 100)
+      : null,
     sourceRefs: safeAuditSourceRefs(event.sourceRefs),
   };
   return isValidAuditRecord(record) ? record : null;

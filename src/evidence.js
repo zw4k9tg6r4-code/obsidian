@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { assertSourcePath, isPathInside } from './config.js';
-import { parseMarkdown, projectForFile } from './vault.js';
+import { isSkippedVaultEntry, parseMarkdown, projectForFile } from './vault.js';
 import { DEFAULT_STRUCTURE, historicalPathPattern } from './structure.js';
 
 const HIGH_IMPACT_PATTERN = /(价格|报价|金额|费用|收费|收钱|多少钱|运价|日期|状态|完成|已完成|发布|提交|上传|账号|路径|承诺|时效|截止|合同|库存|政策|权限|删除)|\b(price|pricing|cost|fee|quote|quotation|amount|deadline|due\s+date|schedule|date|status|release|deploy|submit|upload|account|password|path|contract|inventory|policy|permission|delete)\b/i;
@@ -571,7 +571,7 @@ export function openEvidence(result, { vault, projects, query, matchType, struct
 function walkMarkdown(dir, root = dir, output = []) {
   if (!existsSync(dir)) return output;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === '.obsidian') continue;
+    if (isSkippedVaultEntry(entry.name)) continue;
     const full = join(dir, entry.name);
     const stat = lstatSync(full);
     if (stat.isSymbolicLink()) continue;
@@ -841,10 +841,6 @@ export function decideEvidence({ query, evidence, scope, indexFresh, temporalInt
         ? 'high-impact question lacks current authoritative evidence'
         : 'question lacks current authoritative evidence',
     };
-  }
-
-  if (!indexFresh && relevantAuthoritative.length === 0) {
-    return { decision: 'insufficient', reason: 'degraded index and no authoritative lexical evidence' };
   }
 
   return {

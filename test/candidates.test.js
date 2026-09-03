@@ -115,3 +115,22 @@ test('a stale lock is reclaimed safely and the next write still lands', () => {
   assert.ok(!existsSync(lock), 'lock must be released after the write');
   assert.equal(listCandidates(config).length, 1);
 });
+
+test('confirmer identity is recorded and must differ from the creator', () => {
+  const config = sandbox();
+  const added = addCandidate(config, { content: '需要署名的事实', scope: '北辰仓配项目' });
+  assert.throws(() => confirmCandidate(config, {
+    id: added.record.id,
+    userConfirmed: true,
+    confirmedBy: 'ai',
+  }), /differ from the candidate creator/i);
+  assert.equal(listCandidates(config)[0].status, 'candidate');
+  const done = confirmCandidate(config, {
+    id: added.record.id,
+    userConfirmed: true,
+    confirmedBy: 'tester',
+  });
+  assert.equal(done.status, 'confirmed');
+  assert.equal(done.confirmation.confirmedBy, 'tester');
+  assert.equal(listCandidates(config)[0].confirmation.confirmedBy, 'tester');
+});

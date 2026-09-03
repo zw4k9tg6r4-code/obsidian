@@ -137,6 +137,10 @@
               "type": ["string", "null"],
               "enum": [null, "explicit-user", "authoritative-source"]
             },
+            "confirmedBy": {
+              "type": ["string", "null"],
+              "maxLength": 100
+            },
             "sourceRefs": {
               "type": "array",
               "maxItems": 32,

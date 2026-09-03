@@ -17,6 +17,13 @@ function normalizeFrontmatterTypes(obj) {
   return normalized;
 }
 
+export function isSkippedVaultEntry(name) {
+  // Drafts and tooling entries (including `.obsidian`) are never indexed,
+  // synced, counted, or recalled. The safety walk (assertSafeVaultTree) still
+  // inspects everything so skipped entries cannot hide links or escapes.
+  return name === '.obsidian' || name.startsWith('_');
+}
+
 export function parseMarkdown(filePath) {
   const text = readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
   let frontmatter = {};
@@ -216,7 +223,7 @@ export function vaultStats(vault) {
   const stats = [];
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === '.obsidian') continue;
+      if (isSkippedVaultEntry(entry.name)) continue;
       const full = join(dir, entry.name);
       const stat = lstatSync(full);
       if (stat.isSymbolicLink()) continue;
@@ -282,7 +289,7 @@ export function collectTrackedFiles(vault, collections) {
   const tracked = [];
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === '.obsidian') continue;
+      if (isSkippedVaultEntry(entry.name)) continue;
       const full = join(dir, entry.name);
       const stat = lstatSync(full);
       if (stat.isSymbolicLink()) continue;

@@ -50,6 +50,7 @@
       "properties": {
         "type": { "enum": ["explicit-user", "authoritative-source"] },
         "at": { "type": "string", "format": "date-time" },
+        "confirmedBy": { "type": ["string", "null"], "maxLength": 100 },
         "sourceRef": {
           "anyOf": [
             { "$ref": "#/$defs/relativeMarkdownPath" },

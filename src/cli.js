@@ -80,7 +80,7 @@ Usage:
   sbrain projects [--vault PATH]
   sbrain source-hash --path FILE [--vault PATH]
   sbrain candidate add --content TEXT --scope PROJECT [--source-ref FILE]
-  sbrain candidate confirm --id ID (--user-confirmed | --source-ref FILE)
+  sbrain candidate confirm --id ID (--user-confirmed [--confirmed-by NAME] | --source-ref FILE)
   sbrain candidate activate --id ID --target FILE --expected-hash SHA256 [--supersedes ID]
   sbrain candidate mark --id ID --status expired|disputed [--reason TEXT]
   sbrain candidate list [--status STATE]
@@ -158,6 +158,7 @@ async function main() {
       result = confirmCandidate(config, {
         id: option(flags, 'id'),
         userConfirmed: isBooleanFlag(flags, 'user-confirmed'),
+        confirmedBy: option(flags, 'confirmed-by'),
         sourceRef: option(flags, 'source-ref'),
       });
     } else if (action === 'activate') {

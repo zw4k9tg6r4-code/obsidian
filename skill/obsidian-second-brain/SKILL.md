@@ -38,7 +38,8 @@ At a natural checkpoint, decide whether the conversation produced a durable pref
 1. Submit model-derived text only as a candidate:
    `<cli> candidate add --content "..." --scope "..." --json`.
 2. Confirm it only after explicit user confirmation or an independent current authoritative Markdown source inside the candidate's bound project:
-   `<cli> candidate confirm --id ID --user-confirmed --json` or `--source-ref PATH`.
+   `<cli> candidate confirm --id ID --user-confirmed --confirmed-by <your-name> --json` or `--source-ref PATH`.
+   The confirmer name is recorded in the audit trail; a name matching the candidate creator is rejected, so never confirm on the model's own behalf.
 3. Write to the intended Markdown note only after rereading its local `AGENTS.md` and the target file. Make the smallest necessary change.
 4. Reopen the file, compute `<cli> source-hash --path PATH --json`, then activate with the verified hash.
 5. Synchronize the current project scope: `<cli> sync --project "..." --time current --semantic auto --json`. Distinguish between "saved and synchronized" vs "saved with semantic pending". Do not describe a successful Markdown write as failed if sync is pending.

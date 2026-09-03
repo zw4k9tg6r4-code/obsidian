@@ -55,7 +55,7 @@ By default, derived data is stored under `%LOCALAPPDATA%\CodexSecondBrain`. Over
 2. Similarity is relevance, not factual confidence.
 3. High-impact facts require an opened authoritative Markdown source.
 4. Missing evidence returns `insufficient`; conflicting current sources return `conflict`.
-5. AI-generated text starts as a project-bound `candidate`. Confirmation requires explicit user confirmation or a current authoritative source inside that same project, and activation is restricted to Markdown inside the bound project.
+5.  AI-generated text starts as a project-bound `candidate`. Confirmation requires explicit user confirmation or a current authoritative source inside that same project, and activation is restricted to Markdown inside the bound project. User confirmations record a confirmer name that must differ from the creator, so AI output cannot confirm itself.
 6. Superseded facts remain auditable and are excluded from current retrieval by default.
 
 See [architecture](docs/architecture.md) and [review checklist](docs/review-checklist.md) for the full behavior and release gates.
@@ -85,7 +85,7 @@ All CLI commands can emit JSON with `--json`.
 
 ## Vault structure
 
-The default conventions are `02-项目/*/项目主页.md` for projects, `01-长期记忆/` for long-term memory, `04-对话纪要/` for conversation history, `05-工作流/` for workflows, and `01-输入/`, `02-过程/`, `03-输出/`, `04-反馈/` inside each project. Project directories starting with `_` are skipped. Every convention lives in `src/structure.js` and can be overridden per installation through the optional `structure` section of `config/config.json` (see `schemas/config.schema.json`); unknown keys, absolute paths, and parent traversal are rejected.
+The default conventions are `02-项目/*/项目主页.md` for projects, `01-长期记忆/` for long-term memory, `04-对话纪要/` for conversation history, `05-工作流/` for workflows, and `01-输入/`, `02-过程/`, `03-输出/`, `04-反馈/` inside each project. Entries starting with `_` (drafts, templates, tooling) are skipped everywhere: they are never indexed, synced, counted, or recalled as evidence. Every convention lives in `src/structure.js` and can be overridden per installation through the optional `structure` section of `config/config.json` (see `schemas/config.schema.json`); unknown keys, absolute paths, and parent traversal are rejected.
 
 ## Verification
 

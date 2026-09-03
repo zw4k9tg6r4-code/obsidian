@@ -60,15 +60,23 @@ export function resolveDataDir(dataInput, { create = true } = {}) {
   return existsSync(prospective) ? realpathSync.native(prospective) : prospective;
 }
 
+const LOCAL_CONFIG_KEYS = new Set(['schemaVersion', 'vault', 'dataDir', 'structure']);
+
 function readLocalConfig(dataDir) {
   const configPath = join(dataDir, 'config', 'config.json');
   if (!existsSync(configPath)) return {};
+  let parsed;
   try {
-    const parsed = JSON.parse(readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    parsed = JSON.parse(readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
   } catch {
     throw new Error(`Local config is invalid JSON: ${configPath}`);
   }
+  if (!parsed || typeof parsed !== 'object') return {};
+  const unknown = Object.keys(parsed).filter((key) => !LOCAL_CONFIG_KEYS.has(key));
+  if (unknown.length > 0) {
+    throw new Error(`Local config has unknown keys: ${unknown.join(', ')} (see schemas/config.schema.json)`);
+  }
+  return parsed;
 }
 
 function assertSafeDerivedTree(dataDir, candidate, vault, { recursive = true } = {}) {

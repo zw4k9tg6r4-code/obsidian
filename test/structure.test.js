@@ -171,3 +171,16 @@ test('two-character project names participate in positive matching', () => {
   const projects = [{ id: 'p1', name: '北辰', status: 'active', mainObject: '', directory: '' }];
   assert.equal(resolveProjectScope(projects, { query: '北辰现在什么状态' }).kind, 'project');
 });
+
+test('local config.json rejects unknown top-level keys instead of ignoring them', () => {
+  const { root, vault } = customVault();
+  const dataDir = join(root, 'data');
+  const configDir = join(dataDir, 'config');
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+    schemaVersion: 1,
+    vault,
+    vaultPath: vault,
+  }), 'utf8');
+  assert.throws(() => resolveRuntimeConfig({ dataDir }), /unknown keys: vaultPath/i);
+});

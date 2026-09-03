@@ -2,12 +2,12 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 import { isPathInside } from './config.js';
-import { inCollection } from './vault.js';
+import { inCollection, isSkippedVaultEntry } from './vault.js';
 
 function walkMarkdown(root, vault, output = []) {
   if (!existsSync(root)) return output;
   for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (entry.name === '.obsidian') continue;
+    if (isSkippedVaultEntry(entry.name)) continue;
     const full = join(root, entry.name);
     const stat = lstatSync(full);
     if (stat.isSymbolicLink()) continue;

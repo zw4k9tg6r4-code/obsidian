@@ -65,10 +65,14 @@ function sanitizeRecord(item) {
       const confSource = typeof item.confirmation.sourceRef === 'string' && RELATIVE_MD_PATTERN.test(item.confirmation.sourceRef.replaceAll('\\', '/'))
         ? item.confirmation.sourceRef.replaceAll('\\', '/')
         : null;
+      const confBy = typeof item.confirmation.confirmedBy === 'string' && item.confirmation.confirmedBy.trim()
+        ? item.confirmation.confirmedBy.trim().slice(0, 100)
+        : null;
       cleanConfirmation = {
         type: confType,
         at: isValidIsoDate(item.confirmation.at) ? item.confirmation.at : validUpdatedAt,
         sourceRef: confSource,
+        confirmedBy: confBy,
       };
     }
   }
@@ -117,7 +121,7 @@ function sanitizeRecord(item) {
 
   const cleanCreatedBy = typeof item.createdBy === 'string' && item.createdBy.trim()
     ? item.createdBy.trim().slice(0, 100)
-    : 'user';
+    : 'unknown';
 
   return {
     id: validId,
@@ -414,7 +418,7 @@ export function addCandidate(config, { content, scope, sourceRef, createdBy = 'a
   });
 }
 
-export function confirmCandidate(config, { id, userConfirmed = false, sourceRef, traceId }) {
+export function confirmCandidate(config, { id, userConfirmed = false, confirmedBy, sourceRef, traceId }) {
   if (!userConfirmed && !sourceRef) {
     throw new Error('Confirmation requires explicit user confirmation or an authoritative Markdown source.');
   }
@@ -431,6 +435,7 @@ export function confirmCandidate(config, { id, userConfirmed = false, sourceRef,
 
     let confirmationType;
     let normalizedSource = null;
+    let normalizedConfirmedBy = null;
     if (sourceRef) {
       const source = assertSourcePath(config.vault, sourceRef);
       normalizedSource = toVaultRelative(config.vault, source);
@@ -451,12 +456,22 @@ export function confirmCandidate(config, { id, userConfirmed = false, sourceRef,
       confirmationType = 'authoritative-source';
     } else {
       confirmationType = 'explicit-user';
+      // The confirmer identity is recorded in the audit trail. An explicitly
+      // provided name matching the creator is rejected: AI output cannot
+      // confirm itself. Omitting the name keeps the previous behavior
+      // (recorded as 'user') for operator-driven CLI use.
+      const rawConfirmer = typeof confirmedBy === 'string' ? confirmedBy.trim() : '';
+      const confirmer = (rawConfirmer || 'user').slice(0, 100);
+      if (rawConfirmer !== '' && confirmer.toLowerCase() === String(record.createdBy || '').trim().toLowerCase()) {
+        throw new Error('Confirmer must differ from the candidate creator; AI output cannot confirm itself.');
+      }
+      normalizedConfirmedBy = confirmer;
     }
 
     const now = new Date().toISOString();
     record.status = 'confirmed';
     record.updatedAt = now;
-    record.confirmation = { type: confirmationType, at: now, sourceRef: normalizedSource };
+    record.confirmation = { type: confirmationType, at: now, sourceRef: normalizedSource, confirmedBy: normalizedConfirmedBy };
     if (normalizedSource && !record.sourceRefs.includes(normalizedSource)) {
       record.sourceRefs.push(normalizedSource);
     }
@@ -468,6 +483,7 @@ export function confirmCandidate(config, { id, userConfirmed = false, sourceRef,
       from: 'candidate',
       to: 'confirmed',
       confirmationType,
+      confirmedBy: normalizedConfirmedBy,
       sourceRefs: record.sourceRefs,
     }]);
 
